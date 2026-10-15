@@ -136,6 +136,18 @@ kept so a later *Resume* can use `claude --resume`. Resume is not in v1.
   branch name in edit mode.
 - Settings: render style (default painterly), concurrency cap, the role catalog with portrait previews.
 
+## Refinements made while building v1
+
+- **The quest branch is `guild/<quest>/party`,** not `guild/<quest>`: git cannot hold both a branch `guild/<quest>` and
+  branches under `guild/<quest>/…`.
+- **Live messages to a working agent** arrive in the reply to its next `report_progress` call. A stream-json message
+  written to a busy session is only read after the whole turn, and for a subagent that is the entire task. Messages
+  still undelivered when its turn ends start a new turn; a finished agent is resumed with `--resume`.
+- **Edit-mode agents and the Archmage run with `--permission-mode acceptEdits`,** with Edit, Write and Bash in their
+  allowed tools.
+- **Invented roles are sanitised:** only title, describe, tools and prompt are kept. The id must be a slug, and the
+  colours are generated as hex.
+
 ## Out of scope for v1
 
 Auth, cost budgets, nested recruiting, resuming interrupted quests, pushing or opening PRs.

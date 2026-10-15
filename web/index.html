@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guild</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="/web/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L20 12 L30 12 L22 19 L25 30 L16 23 L7 30 L10 19 L2 12 L12 12 Z' fill='%23d4af37'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="#/"><span class="sigil">✦</span> Guild</a>
+    <nav id="quest-tabs" class="tabs"></nav>
+    <div class="bar-actions">
+      <span id="queue-info" class="muted small"></span>
+      <button id="new-quest-btn" class="btn gold">Post a quest</button>
+      <button id="settings-btn" class="btn ghost" title="Settings and roles">⚙</button>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <!-- New quest -->
+  <dialog id="new-quest" class="panel">
+    <form method="dialog" id="new-quest-form">
+      <h2>Post a quest</h2>
+      <label>Goal
+        <textarea name="goal" rows="5" required placeholder="What should the party achieve? Give the context they need."></textarea>
+      </label>
+      <label>Directory
+        <input name="cwd" required placeholder="/home/you/project" spellcheck="false">
+      </label>
+      <div class="row">
+        <fieldset class="seg"><legend>Mode</legend>
+          <label><input type="radio" name="mode" value="read" checked> Read-only</label>
+          <label><input type="radio" name="mode" value="edit"> Edit (git branches)</label>
+        </fieldset>
+        <fieldset class="seg"><legend>Planning</legend>
+          <label><input type="radio" name="planning" value="review" checked> I review</label>
+          <label><input type="radio" name="planning" value="auto"> Automatic</label>
+        </fieldset>
+        <label class="narrow">Party size
+          <input name="maxAgents" type="number" min="1" max="20" value="6">
+        </label>
+      </div>
+      <p class="error" id="new-quest-error"></p>
+      <div class="actions">
+        <button type="button" data-close class="btn ghost">Cancel</button>
+        <button id="new-quest-submit" value="ok" class="btn gold">Summon the Archmage</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="settings" class="panel wide">
+    <form method="dialog" id="settings-form">
+      <h2>Settings</h2>
+      <div class="row">
+        <label>Portrait style <select name="style" id="style-select"></select></label>
+        <label class="narrow">Max running agents <input name="maxConcurrent" type="number" min="1" max="32"></label>
+        <label class="narrow">Default party size <input name="maxAgents" type="number" min="1" max="20"></label>
+        <label class="narrow">Report batch (s) <input name="batchSeconds" type="number" min="5" max="600"></label>
+      </div>
+      <h3>Role catalog</h3>
+      <div id="role-gallery" class="role-gallery"></div>
+      <details>
+        <summary>Edit the catalog (JSON)</summary>
+        <textarea id="roles-json" rows="18" spellcheck="false" class="mono"></textarea>
+        <button type="button" id="roles-save" class="btn">Save catalog</button>
+        <span class="error" id="roles-error"></span>
+      </details>
+      <div class="actions">
+        <button type="button" data-close class="btn ghost">Close</button>
+        <button value="ok" class="btn gold">Save settings</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Agent detail -->
+  <dialog id="agent-detail" class="panel wide">
+    <div id="agent-detail-body"></div>
+    <form method="dialog" class="actions"><button class="btn ghost">Close</button></form>
+  </dialog>
+
+  <!-- Text prompt (message / answer) -->
+  <dialog id="prompt" class="panel">
+    <form method="dialog" id="prompt-form">
+      <h2 id="prompt-title"></h2>
+      <p id="prompt-hint" class="muted"></p>
+      <textarea name="text" rows="5" required></textarea>
+      <div class="actions">
+        <button type="button" data-close class="btn ghost">Cancel</button>
+        <button value="ok" class="btn gold">Send</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/web/app.js"></script>
+</body>
+</html>
