@@ -10,15 +10,19 @@ const EXPRESSION = {
 };
 
 const cache = new Map();
+let portraitTheme = 'fantasy';
 
-export function portraitSvg({ seed, role, status, style, size = 160 }) {
+/** The portraitgen theme (fantasy, modern or scifi) used when a call does not name one. */
+export function setPortraitTheme(id) { portraitTheme = id; }
+
+export function portraitSvg({ seed, role, status, style, size = 160, theme = portraitTheme }) {
   const expression = EXPRESSION[status] ?? 'neutral';
-  const key = `${seed}|${role?.describe}|${JSON.stringify(role?.colors ?? {})}|${expression}|${style}|${size}`;
+  const key = `${theme}|${seed}|${role?.describe}|${JSON.stringify(role?.colors ?? {})}|${expression}|${style}|${size}`;
   let svg = cache.get(key);
   if (!svg) {
     try {
       const traits = generate({
-        theme: 'fantasy', seed, describe: role?.describe ?? 'human adventurer',
+        theme, seed, describe: role?.describe ?? 'human adventurer',
         colors: role?.colors, expression, style,
       });
       svg = render(traits, { size });

@@ -4,18 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Guild</title>
+  <meta name="description" content="Guild orchestrates Claude Code agents. Agents and scripts: read /llms.txt or GET /api for the JSON API.">
+  <link rel="help" href="/llms.txt">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&family=Orbitron:wght@500;700&family=Exo+2:ital,wght@0,400;0,600;1,400&display=swap">
   <link rel="stylesheet" href="/web/style.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L20 12 L30 12 L22 19 L25 30 L16 23 L7 30 L10 19 L2 12 L12 12 Z' fill='%23d4af37'/%3E%3C/svg%3E">
 </head>
 <body>
+  <noscript><p>Guild orchestrates Claude Code agents. This page needs JavaScript. Agents and scripts: read <a href="/llms.txt">/llms.txt</a>, or GET <a href="/api">/api</a> for the JSON API.</p></noscript>
   <header class="bar">
-    <a class="brand" href="#/"><span class="sigil">✦</span> Guild</a>
+    <a class="brand" href="#/"><span class="sigil">✦</span> <span data-w="brand">Guild</span></a>
     <nav id="quest-tabs" class="tabs"></nav>
     <div class="bar-actions">
       <span id="queue-info" class="muted small"></span>
-      <button id="new-quest-btn" class="btn gold">Post a quest</button>
+      <button id="new-quest-btn" class="btn gold" data-w="post">Post a quest</button>
       <button id="settings-btn" class="btn ghost" title="Settings and roles">⚙</button>
     </div>
   </header>
@@ -25,9 +28,9 @@
   <!-- New quest -->
   <dialog id="new-quest" class="panel">
     <form method="dialog" id="new-quest-form">
-      <h2>Post a quest</h2>
+      <h2 data-w="post">Post a quest</h2>
       <label>Goal
-        <textarea name="goal" rows="5" required placeholder="What should the party achieve? Give the context they need."></textarea>
+        <textarea name="goal" rows="5" required data-w-placeholder="goalHint" placeholder="What should the party achieve? Give the context they need."></textarea>
       </label>
       <label>Directory
         <input name="cwd" required placeholder="/home/you/project" spellcheck="false">
@@ -41,14 +44,14 @@
           <label><input type="radio" name="planning" value="review" checked> I review</label>
           <label><input type="radio" name="planning" value="auto"> Automatic</label>
         </fieldset>
-        <label class="narrow">Party size
+        <label class="narrow"><span data-w="partySize">Party size</span>
           <input name="maxAgents" type="number" min="1" max="20" value="6">
         </label>
       </div>
       <p class="error" id="new-quest-error"></p>
       <div class="actions">
         <button type="button" data-close class="btn ghost">Cancel</button>
-        <button id="new-quest-submit" value="ok" class="btn gold">Summon the Archmage</button>
+        <button id="new-quest-submit" value="ok" class="btn gold" data-w="summon">Summon the Archmage</button>
       </div>
     </form>
   </dialog>
@@ -58,9 +61,10 @@
     <form method="dialog" id="settings-form">
       <h2>Settings</h2>
       <div class="row">
+        <label>Theme <select name="theme" id="theme-select"></select></label>
         <label>Portrait style <select name="style" id="style-select"></select></label>
         <label class="narrow">Max running agents <input name="maxConcurrent" type="number" min="1" max="32"></label>
-        <label class="narrow">Default party size <input name="maxAgents" type="number" min="1" max="20"></label>
+        <label class="narrow"><span data-w="defaultPartySize">Default party size</span> <input name="maxAgents" type="number" min="1" max="20"></label>
         <label class="narrow">Report batch (s) <input name="batchSeconds" type="number" min="5" max="600"></label>
       </div>
       <h3>Role catalog</h3>
@@ -81,6 +85,14 @@
   <!-- Agent detail -->
   <dialog id="agent-detail" class="panel wide">
     <div id="agent-detail-body"></div>
+    <form method="dialog" class="actions"><button class="btn ghost">Close</button></form>
+  </dialog>
+
+  <!-- Attached file viewer -->
+  <dialog id="file-viewer" class="panel wide">
+    <h2 id="file-title"></h2>
+    <p id="file-meta" class="muted small"></p>
+    <div id="file-body" class="file-body"></div>
     <form method="dialog" class="actions"><button class="btn ghost">Close</button></form>
   </dialog>
 

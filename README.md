@@ -69,6 +69,9 @@ Set `GUILD_URL` to use a server elsewhere; a remote server is never auto-started
 
 ### Over HTTP
 
+An agent given only the URL can find its way: `GET /llms.txt` (plain text) and `GET /api` (JSON) describe the
+API below, and the page itself points to them for clients that don't run JavaScript.
+
 ```bash
 curl -s localhost:7777/api/quests -H 'content-type: application/json' \
   -d '{"goal":"Audit the auth module for security issues","cwd":"/home/me/app","mode":"read","planning":"auto"}'

@@ -18,6 +18,7 @@ test('report-mcp forwards reports and long-polls answers', async () => {
       seen.push(`${req.method} ${req.url} ${body}`);
       res.setHeader('content-type', 'application/json');
       if (req.url.endsWith('/report')) return res.end('{"notes":["be brief"]}');
+      if (req.url.endsWith('/attach')) return res.end('{"text":"Attached shot.png"}');
       if (req.method === 'POST') return res.end('{"askId":"k1"}');
       res.end(++polls < 2 ? '{"pending":true}' : '{"answer":"Hail"}');
     });
@@ -44,16 +45,19 @@ test('report-mcp forwards reports and long-polls answers', async () => {
   const init = await rpc(1, 'initialize', { protocolVersion: '2025-06-18' });
   assert.equal(init.result.serverInfo.name, 'guild');
   const list = await rpc(2, 'tools/list');
-  assert.deepEqual(list.result.tools.map((t) => t.name), ['report_progress', 'ask']);
+  assert.deepEqual(list.result.tools.map((t) => t.name), ['report_progress', 'attach_file', 'ask']);
   const rep = await rpc(3, 'tools/call', { name: 'report_progress', arguments: { percent: 10, message: 'hi' } });
   assert.match(rep.result.content[0].text, /be brief/);
   const ask = await rpc(4, 'tools/call', { name: 'ask', arguments: { question: 'Hello or Hail?' } });
   assert.equal(ask.result.content[0].text, 'Answer: Hail');
+  const att = await rpc(6, 'tools/call', { name: 'attach_file', arguments: { path: 'shot.png', caption: 'Title' } });
+  assert.equal(att.result.content[0].text, 'Attached shot.png');
   const bad = await rpc(5, 'tools/call', { name: 'nope', arguments: {} });
   assert.equal(bad.result.isError, true);
 
   assert.ok(seen.some((s) => s.startsWith('POST /internal/quests/q/agents/a1/report')));
   assert.ok(seen.some((s) => s.startsWith('GET /internal/quests/q/agents/a1/ask/k1?wait=50')));
+  assert.ok(seen.includes('POST /internal/quests/q/agents/a1/attach {"path":"shot.png","caption":"Title"}'));
   child.stdin.end();
   await new Promise((r) => child.once('exit', r));
   stub.close();

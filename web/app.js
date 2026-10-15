@@ -1,15 +1,16 @@
 // Guild web UI: the hall of quests and the live council table.
 
-import { setPortrait, STYLES } from './portraits.js';
+import { setPortrait, setPortraitTheme, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
+import { theme, themedRole, THEMES } from './themes.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const ACTIVE = new Set(['planning', 'awaiting-approval', 'questing']);
-const STATUS_WORD = {
-  planning: 'Planning', 'awaiting-approval': 'Awaiting your approval', questing: 'On the quest',
-  done: 'Complete', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted',
-};
-const AGENT_WORD = { queued: 'Waiting', working: 'Questing', blocked: 'Blocked', done: 'Returned', failed: 'Fallen', cancelled: 'Recalled', interrupted: 'Interrupted' };
+// The theme only changes wording, colours and looks (web/themes.js).
+const T = () => theme(G.settings.theme);
+const W = () => T().words;
+const questWord = (st) => W().questStatus[st] ?? st;
+const agentWord = (st) => W().agentStatus[st] ?? st;
 
 const G = {
   settings: {}, roles: {}, quests: new Map(),
@@ -30,13 +31,26 @@ async function api(method, path, body) {
 const money = (n) => (n ? `$${n.toFixed(n < 1 ? 3 : 2)}` : '');
 const time = (ts) => (ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 const when = (ts) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const role = (id, q = G.q) => q?.roles?.[id] ?? G.roles[id] ?? { title: id, describe: 'human adventurer' };
-const archRole = () => Object.values(G.roles).find((r) => r.orchestrator) ?? { describe: 'old human wizard with a long white beard', name: 'Velothar' };
+const role = (id, q = G.q) => themedRole(G.settings.theme, id, q?.roles?.[id] ?? G.roles[id] ?? { title: id, describe: 'human adventurer' });
+const archRole = () => {
+  const [id, r] = Object.entries(G.roles).find(([, x]) => x.orchestrator) ?? ['archmage', { describe: 'old human wizard with a long white beard', name: 'Velothar' }];
+  return { ...themedRole(G.settings.theme, id, r), name: G.settings.theme && G.settings.theme !== 'fantasy' ? T().leader.name : r.name };
+};
+const fullName = (name, title) => T().fullName(name, title);
+
+/** Dress the page in the current theme: colours and fonts (CSS), portraits, and the static wording. */
+function applyTheme() {
+  document.documentElement.dataset.theme = THEMES[G.settings.theme] ? G.settings.theme : 'fantasy';
+  setPortraitTheme(T().portrait);
+  for (const el of document.querySelectorAll('[data-w]')) el.textContent = W()[el.dataset.w];
+  for (const el of document.querySelectorAll('[data-w-placeholder]')) el.placeholder = W()[el.dataset.wPlaceholder];
+  $('.sigil').textContent = W().sigil;
+}
 const style = () => G.settings.style ?? 'painterly';
 
 function toast(msg) {
   const el = Object.assign(document.createElement('div'), { textContent: msg });
-  Object.assign(el.style, { position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: '#2a2235', border: '1px solid #8a7430', color: '#ece3d0', padding: '0.6rem 1rem', borderRadius: '8px', zIndex: 99, maxWidth: 'calc(100vw - 32px)' });
+  Object.assign(el.style, { position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: 'var(--panel2)', border: '1px solid var(--gold-soft)', color: 'var(--ink)', padding: '0.6rem 1rem', borderRadius: '8px', zIndex: 99, maxWidth: 'calc(100vw - 32px)' });
   document.body.append(el);
   setTimeout(() => el.remove(), 4000);
 }
@@ -49,6 +63,7 @@ function connectGlobal() {
     const s = JSON.parse(e.data);
     G.settings = s.settings;
     G.roles = s.roles;
+    applyTheme();
     G.quests = new Map(s.quests.map((q) => [q.id, q]));
     renderTabs();
     route();
@@ -59,7 +74,11 @@ function connectGlobal() {
     renderTabs();
     if (!G.q && !location.hash.startsWith('#/quest/')) renderHall();
   });
-  es.addEventListener('settings', (e) => { G.settings = JSON.parse(e.data).settings; });
+  es.addEventListener('settings', (e) => {
+    const before = G.settings.theme;
+    G.settings = JSON.parse(e.data).settings;
+    if (G.settings.theme !== before) { applyTheme(); rerender(); }
+  });
   es.addEventListener('roles', (e) => { G.roles = JSON.parse(e.data).roles; });
 }
 
@@ -72,7 +91,7 @@ function renderTabs() {
     </a>`).join('');
   const running = list.reduce((n, q) => n + q.party.filter((a) => a.status === 'working' || a.status === 'blocked').length, 0);
   const waiting = list.reduce((n, q) => n + q.party.filter((a) => a.status === 'queued').length, 0);
-  $('#queue-info').textContent = running || waiting ? `${running}/${G.settings.maxConcurrent} agents afield${waiting ? `, ${waiting} waiting` : ''}` : '';
+  $('#queue-info').textContent = running || waiting ? `${running}/${G.settings.maxConcurrent} ${W().agentsAfield}${waiting ? `, ${waiting} waiting` : ''}` : '';
 }
 
 // ───────────── routing ─────────────
@@ -98,13 +117,13 @@ function renderHall() {
   const ar = archRole();
   $('#view').innerHTML = `
     <div class="hall-head">
-      <h1>The Guild Hall</h1>
-      <p>Post a quest; the Archmage gathers a party of agents and reports back.</p>
-      <button class="btn gold" data-new>Post a quest</button>
+      <h1>${esc(W().hallTitle)}</h1>
+      <p>${esc(W().hallLead)}</p>
+      <button class="btn gold" data-new>${esc(W().post)}</button>
     </div>
     ${list.length ? `<div class="quest-grid">${list.map((q) => `
       <a class="quest-card" href="#/quest/${q.id}">
-        <div class="meta"><span class="dot ${q.status}"></span><span class="status-word">${STATUS_WORD[q.status] ?? q.status}</span>
+        <div class="meta"><span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
           ${q.mode === 'edit' ? '<span class="badge edit">edit</span>' : '<span class="badge">read-only</span>'}
           <span>${when(q.createdAt)}</span><span>${money(q.costUsd)}</span></div>
         <div class="goal">${esc(q.goal)}</div>
@@ -112,7 +131,7 @@ function renderHall() {
         <div class="mini-party" data-quest="${q.id}"></div>
       </a>`).join('')}</div>`
       : `<div class="empty"><div class="mini" style="width:160px;height:160px;margin:0 auto 1rem;border-radius:50%;overflow:hidden" id="hall-arch"></div>
-         <p>No quests yet. The Archmage waits.</p></div>`}`;
+         <p>${esc(W().hallEmpty)}</p></div>`}`;
   $('[data-new]', $('#view')).onclick = openNewQuest;
   const ha = $('#hall-arch');
   if (ha) setPortrait(ha, { seed: ar.name ?? 'Velothar', role: ar, status: 'waiting', style: style(), size: 200 });
@@ -123,7 +142,7 @@ function renderHall() {
       d.className = 'mini';
       d.title = `${a.name} (${a.status})`;
       el.append(d);
-      setPortrait(d, { seed: a.name, role: G.roles[a.role] ?? { describe: 'human adventurer' }, status: a.status, style: 'illustrated', size: 64 });
+      setPortrait(d, { seed: a.name, role: role(a.role, null), status: a.status, style: 'illustrated', size: 64 });
     }
   }
 }
@@ -132,7 +151,7 @@ function renderHall() {
 
 function openQuest(id) {
   closeQuest();
-  $('#view').innerHTML = '<p class="muted">Opening the quest…</p>';
+  $('#view').innerHTML = `<p class="muted">${esc(W().opening)}</p>`;
   const es = new EventSource(`/api/quests/${id}/events`);
   G.es = es;
   es.addEventListener('snapshot', (e) => { G.q = JSON.parse(e.data); buildQuest(); });
@@ -150,18 +169,24 @@ function openQuest(id) {
     const a = G.q.agents.find((x) => x.id === agentId);
     if (a) { a.activity = activity; const c = G.cards.get(agentId); if (c) $('.activity', c).textContent = activity ?? ''; }
   });
-  es.addEventListener('log', (e) => { G.q.log.push(JSON.parse(e.data).entry); renderLog(); });
+  es.addEventListener('log', (e) => { G.q.log.push(JSON.parse(e.data).entry); renderLog(); renderThread(); });
+  es.addEventListener('attachment', (e) => {
+    (G.q.attachments ??= []).push(JSON.parse(e.data).attachment);
+    renderParty();
+    renderArchmage();
+  });
   es.addEventListener('report', (e) => { const d = JSON.parse(e.data); sendOrb(d.agentId, 'up'); });
   es.addEventListener('plan', (e) => { const d = JSON.parse(e.data); G.q.plan = d.plan; G.q.roles = d.roles; renderPlan(); });
   es.addEventListener('roles', (e) => { G.q.roles = JSON.parse(e.data).roles; renderParty(); });
   es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diff = d.diff; renderChronicle(); });
-  es.onerror = () => { if (!G.q) $('#view').innerHTML = '<div class="empty">This quest could not be found.</div>'; };
+  es.onerror = () => { if (!G.q) $('#view').innerHTML = `<div class="empty">${esc(W().notFound)}</div>`; };
 }
 
 function buildQuest() {
   G.cards.clear();
   G.threads.clear();
   G.logCount = 0;
+  G.threadCount = 0;
   $('#view').innerHTML = `
     <section class="quest">
       <div class="quest-head" id="q-head"></div>
@@ -172,9 +197,18 @@ function buildQuest() {
           <div>
             <div class="name"></div>
             <div class="role"></div>
-            <div class="bubble"></div>
+            <div class="bubble"><div class="md bubble-body"></div><button class="more hidden" type="button">Show more</button></div>
             <div class="activity"></div>
-            <div class="foot"><span class="cost"></span><button class="btn small" data-msg-arch>Speak to the Archmage</button></div>
+            <div class="files"></div>
+            <div class="foot"><span class="cost"></span></div>
+          </div>
+          <div class="converse">
+            <h4>${esc(W().council)}</h4>
+            <ol id="thread"></ol>
+            <form class="composer" id="composer">
+              <textarea name="text" rows="2"></textarea>
+              <button class="btn small gold">Send</button>
+            </form>
           </div>
           <span class="status"></span>
         </div></div>
@@ -183,18 +217,25 @@ function buildQuest() {
       </div>
       <div class="lower" id="lower">
         <div class="scroll">
-          <h3>Dispatch scroll</h3>
+          <h3>${esc(W().scroll)}</h3>
           <div class="filters">
-            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${{ all: 'Everything', reports: 'Reports', archmage: 'Archmage', you: 'You' }[f]}</button>`).join('')}
+            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${{ all: 'Everything', reports: 'Reports', archmage: role(G.q.archmage?.role ?? 'archmage').title ?? 'Leader', you: 'You' }[f]}</button>`).join('')}
           </div>
           <ol id="log"></ol>
         </div>
         <div class="chronicle" id="chronicle"></div>
       </div>
     </section>`;
-  $('[data-msg-arch]').onclick = async () => {
-    const text = await askText('Speak to the Archmage', 'Guidance, a correction, or a request for a different plan.');
-    if (text) api('POST', `/api/quests/${G.q.id}/message`, { text }).catch((e) => toast(e.message));
+  const composer = $('#composer');
+  composer.onsubmit = (ev) => {
+    ev.preventDefault();
+    const text = composer.text.value.trim();
+    if (!text) return;
+    composer.text.value = '';
+    api('POST', `/api/quests/${G.q.id}/message`, { text }).catch((e) => { composer.text.value = text; toast(e.message); });
+  };
+  composer.text.onkeydown = (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); composer.requestSubmit(); }
   };
   for (const b of document.querySelectorAll('[data-filter]')) b.onclick = () => {
     G.filter = b.dataset.filter;
@@ -221,23 +262,27 @@ function renderHead() {
   const total = (q.archmage?.costUsd ?? 0) + q.agents.reduce((n, a) => n + (a.costUsd ?? 0), 0);
   $('#q-head').innerHTML = `
     <div>
-      <p class="goal">${esc(q.goal)}</p>
+      <p class="goal ${G.goalOpen ? 'open' : ''}">${esc(q.goal)}</p>
+      <button class="goal-more hidden" type="button">${G.goalOpen ? 'Show less' : esc(W().fullGoal)}</button>
       <div class="meta">
-        <span class="dot ${q.status}"></span><span class="status-word">${STATUS_WORD[q.status] ?? q.status}</span>
+        <span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
         ${q.mode === 'edit' ? '<span class="badge edit">edit mode</span>' : '<span class="badge">read-only</span>'}
         <span class="badge">${q.planning === 'review' ? 'reviewed plan' : 'automatic plan'}</span>
         <code>${esc(q.cwd)}</code>
         ${q.repo?.branch ? `<span>branch <code>${esc(q.repo.branch)}</code></span>` : ''}
-        <span>${q.agents.length} in the party${working ? `, ${working} afield` : ''}</span>
+        <span>${q.agents.length} ${esc(W().inParty)}${working ? `, ${working} ${esc(W().afield)}` : ''}</span>
         <span>${money(total)}</span>
         <span>${when(q.createdAt)}</span>
       </div>
     </div>
     <div class="row" style="flex:none">
-      ${active ? '<button class="btn danger" data-cancel-quest>Abandon quest</button>' : ''}
+      ${active ? `<button class="btn danger" data-cancel-quest>${esc(W().abandon)}</button>` : ''}
     </div>`;
+  const goal = $('#q-head .goal'), more = $('#q-head .goal-more');
+  more.classList.toggle('hidden', !G.goalOpen && goal.scrollHeight <= goal.clientHeight + 2);
+  more.onclick = () => { G.goalOpen = !G.goalOpen; renderHead(); };
   const c = $('[data-cancel-quest]');
-  if (c) c.onclick = () => { if (confirm('Abandon this quest and recall the whole party?')) api('POST', `/api/quests/${q.id}/cancel`).catch((e) => toast(e.message)); };
+  if (c) c.onclick = () => { if (confirm(W().abandonConfirm)) api('POST', `/api/quests/${q.id}/cancel`).catch((e) => toast(e.message)); };
 }
 
 function renderArchmage() {
@@ -246,13 +291,59 @@ function renderArchmage() {
   const r = role(a.role);
   setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220 });
   el.className = `card archmage ${a.status}`;
-  $('.name', el).textContent = `${a.name} the ${a.title}`;
-  $('.role', el).innerHTML = `<span>Leader of the party</span>${a.model ? `<span class="badge">${esc(a.model)}</span>` : ''}`;
-  $('.bubble', el).textContent = a.thought ?? '…';
-  $('.activity', el).textContent = a.activity ?? (a.status === 'thinking' ? 'Pondering…' : a.status === 'waiting' ? 'Awaiting dispatches' : '');
-  $('.status', el).textContent = { thinking: 'Thinking', waiting: 'Listening', done: 'At rest', idle: 'At rest' }[a.status] ?? a.status;
+  $('.name', el).textContent = fullName(a.name, r.title ?? a.title);
+  $('.role', el).innerHTML = `<span>${esc(W().leaderOf)}</span>${a.model ? `<span class="badge">${esc(a.model)}</span>` : ''}`;
+  renderBubble($('.bubble', el), a.thought ?? '…');
+  $('.activity', el).textContent = a.activity ?? (a.status === 'thinking' ? W().thinking : a.status === 'waiting' ? W().listening : '');
+  $('.status', el).textContent = W().leaderStatus[a.status] ?? a.status;
   $('.cost', el).textContent = money(a.costUsd);
-  $('[data-msg-arch]', el).classList.toggle('hidden', !ACTIVE.has(q.status));
+  el.classList.toggle('asking', !!a.question);
+  renderFiles($('.files', el), 'archmage');
+  const composer = $('#composer');
+  composer.classList.toggle('hidden', !ACTIVE.has(q.status));
+  composer.text.placeholder = a.question ? `Answer ${a.name}'s question…` : W().speak;
+  renderThread();
+}
+
+// ── council thread: the conversation between the human and the Archmage ──
+
+const inThread = (e) => (e.who === 'you' && e.to === 'archmage') || (e.who === 'archmage' && e.to === 'you');
+
+function renderThread() {
+  const ol = $('#thread'), q = G.q;
+  if (!ol || !q) return;
+  const atBottom = ol.scrollHeight - ol.scrollTop - ol.clientHeight < 40;
+  for (; G.threadCount < q.log.length; G.threadCount++) {
+    const e = q.log[G.threadCount];
+    if (!inThread(e)) continue;
+    const li = document.createElement('li');
+    li.className = `from-${e.who} kind-${e.kind}`;
+    const label = e.who === 'you' ? 'You' : e.kind === 'ask' ? `${whoLabel('archmage')} asks you` : whoLabel('archmage');
+    li.innerHTML = `<div class="head"><b>${esc(label)}</b> · ${time(e.ts)}</div><div class="md"></div>`;
+    $('.md', li).innerHTML = markdown(e.text);
+    if (e.attachment) $('.md', li).replaceChildren(fileChip(e.attachment, true));
+    ol.append(li);
+  }
+  let hint = $('.thread-hint', ol);
+  const last = q.log.filter(inThread).at(-1);
+  const pondering = !!q.archmage?.replying;
+  const text = pondering ? `${whoLabel('archmage')} ${W().pondering}` : !last ? W().threadEmpty : '';
+  if (text && !hint) { hint = Object.assign(document.createElement('li'), { className: 'thread-hint muted' }); }
+  if (hint) { hint.textContent = text; if (text) ol.append(hint); else hint.remove(); }
+  if (atBottom || last?.who === 'you') ol.scrollTop = ol.scrollHeight;
+}
+
+// The bubble shows the Archmage's latest words as markdown, clamped with a Show more toggle when long.
+function renderBubble(b, text) {
+  const body = $('.bubble-body', b), more = $('.more', b);
+  if (b.dataset.src !== text) {
+    b.dataset.src = text;
+    body.innerHTML = markdown(text);
+  }
+  more.onclick = () => { G.bubbleOpen = !G.bubbleOpen; renderBubble(b, text); };
+  b.classList.toggle('open', !!G.bubbleOpen);
+  more.textContent = G.bubbleOpen ? 'Show less' : 'Show more';
+  more.classList.toggle('hidden', !G.bubbleOpen && body.scrollHeight <= body.clientHeight + 2);
 }
 
 // ── party cards ──
@@ -272,14 +363,18 @@ function renderParty() {
         <div class="question hidden"><div class="q"></div><textarea placeholder="Your answer…"></textarea><button class="btn small gold">Answer</button></div>
         <div class="report"></div>
         <div class="activity"></div>
+        <div class="files"></div>
         <div class="runebar"><div class="fill"></div><div class="ticks"></div><span class="pct"></span></div>
         <div class="foot"><span class="cost"></span><span>
+          <button class="icon-btn" data-act="details" title="Show the full task and reports">⤢</button>
           <button class="icon-btn" data-act="message" title="Send a message">✉</button>
-          <button class="icon-btn" data-act="recall" title="Recall this agent">✕</button>
+          <button class="icon-btn" data-act="recall" title="${esc(W().recallTitle)}">✕</button>
         </span></div>`;
       el.dataset.id = a.id;
       $('.portrait', el).onclick = () => openAgent(a.id);
       $('.task', el).onclick = () => openAgent(a.id);
+      $('.report', el).onclick = () => openAgent(a.id);
+      $('[data-act=details]', el).onclick = () => openAgent(a.id);
       $('.name', el).onclick = () => openAgent(a.id);
       $('[data-act=message]', el).onclick = () => messageAgent(a.id);
       $('[data-act=recall]', el).onclick = () => recallAgent(a.id);
@@ -295,15 +390,19 @@ function renderParty() {
   requestAnimationFrame(drawThreads);
 }
 
+// Working cards first, then waiting ones, then the finished: the flex order keeps recruitment order within each group.
+const CARD_ORDER = { working: 0, blocked: 0, queued: 1 };
+
 function updateCard(el, a) {
   const r = role(a.role);
   el.className = `card ${a.status}`;
+  el.style.order = CARD_ORDER[a.status] ?? 2;
   setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220 });
-  $('.status', el).textContent = AGENT_WORD[a.status] ?? a.status;
+  $('.status', el).textContent = agentWord(a.status);
   $('.status', el).className = `status ${a.status}`;
   $('.name', el).textContent = a.name;
   const invented = G.q.roles?.[a.role] && !G.roles[a.role];
-  $('.role', el).innerHTML = `<span>${esc(a.title)}</span>${invented ? '<span class="badge new">new role</span>' : ''}`;
+  $('.role', el).innerHTML = `<span>${esc(r.title ?? a.title)}</span>${invented ? '<span class="badge new">new role</span>' : ''}`;
   $('.task', el).textContent = a.task;
   $('.task', el).title = a.task;
   const qb = $('.question', el);
@@ -315,6 +414,7 @@ function updateCard(el, a) {
   $('.fill', el).style.width = `${a.status === 'done' ? 100 : a.percent ?? 0}%`;
   $('.pct', el).textContent = `${a.status === 'done' ? 100 : a.percent ?? 0}%`;
   $('.cost', el).textContent = money(a.costUsd);
+  renderFiles($('.files', el), a.id);
   const finished = ['done', 'failed', 'cancelled', 'interrupted'].includes(a.status);
   $('[data-act=recall]', el).classList.toggle('hidden', finished || !ACTIVE.has(G.q.status));
   $('[data-act=message]', el).classList.toggle('hidden', ['cancelled', 'interrupted'].includes(a.status) || !ACTIVE.has(G.q.status));
@@ -329,9 +429,20 @@ function centerOf(el, box) {
   return { x: r.left - box.left + r.width / 2, top: r.top - box.top, bottom: r.bottom - box.top };
 }
 
+// The Archmage card spans the party row below it (at least 900px, at most the council's width).
+function sizeArchmage() {
+  const arch = $('#archmage-card'), cards = [...G.cards.values()].filter((c) => c.isConnected);
+  if (!arch) return;
+  if (!cards.length) { arch.style.width = ''; return; } // the stylesheet's 900px
+  const rects = cards.map((c) => c.getBoundingClientRect());
+  const span = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
+  arch.style.width = `${Math.max(900, Math.round(span))}px`;
+}
+
 function drawThreads() {
   const svg = $('#threads'), council = $('#council'), arch = $('#archmage-card');
   if (!svg || !G.q) return;
+  sizeArchmage();
   const box = council.getBoundingClientRect();
   svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
   const from = centerOf(arch, box);
@@ -393,12 +504,12 @@ function renderPlan() {
   const roleIds = [...Object.keys(G.roles).filter((id) => !G.roles[id].orchestrator), ...Object.keys(q.roles ?? {}).filter((id) => !G.roles[id])];
   slot.innerHTML = `
     <div class="plan">
-      <h3>The Archmage proposes a party</h3>
+      <h3>${esc(W().proposes)}</h3>
       <p>${esc(q.plan.summary ?? '')}</p>
       <div class="party" id="contracts"></div>
       <div class="plan-actions">
-        <button class="btn gold" data-dispatch>Dispatch the party</button>
-        <button class="btn" data-replan>Ask for a different plan</button>
+        <button class="btn gold" data-dispatch>${esc(W().dispatch)}</button>
+        <button class="btn" data-replan>${esc(W().replan)}</button>
       </div>
     </div>`;
   const box = $('#contracts');
@@ -420,7 +531,7 @@ function renderPlan() {
   if (G.planDraft.length < q.maxAgents) {
     const add = document.createElement('div');
     add.className = 'card contract add';
-    add.textContent = '+ Add a member';
+    add.textContent = W().addMember;
     add.onclick = () => { G.planDraft.push({ role: roleIds[0], task: '' }); renderPlan(); };
     box.append(add);
   }
@@ -429,7 +540,7 @@ function renderPlan() {
     try { await api('POST', `/api/quests/${q.id}/plan/approve`, { agents: G.planDraft }); } catch (err) { toast(err.message); e.target.disabled = false; }
   };
   $('[data-replan]', slot).onclick = async () => {
-    const text = await askText('Ask for a different plan', 'Tell the Archmage what to change; it will propose again.');
+    const text = await askText(W().replan, W().replanHint);
     if (text) api('POST', `/api/quests/${q.id}/message`, { text: `Please revise the plan and call propose_plan again: ${text}` }).catch((e) => toast(e.message));
   };
 }
@@ -437,9 +548,9 @@ function renderPlan() {
 // ── the dispatch scroll ──
 
 function whoLabel(who) {
-  if (who === 'archmage') return G.q.archmage ? `${G.q.archmage.name}` : 'Archmage';
+  if (who === 'archmage') return G.q.archmage?.name ?? role('archmage').title;
   if (who === 'you') return 'You';
-  if (who === 'guild') return 'The Guild';
+  if (who === 'guild') return W().guildName;
   const a = G.q.agents.find((x) => x.id === who);
   return a ? a.name : who;
 }
@@ -462,13 +573,14 @@ function renderLog() {
     const li = document.createElement('li');
     li.className = `kind-${e.kind}`;
     const to = e.to ? ` → ${esc(e.to === 'archmage' ? whoLabel('archmage') : whoLabel(e.to))}` : '';
-    const label = { report: `${e.percent ?? ''}%${e.phase ? ` · ${esc(e.phase)}` : ''}`, question: 'asks', answer: 'answers', done: 'returns', failed: 'falls', say: 'says', action: '', message: 'says', system: '' }[e.kind] ?? '';
+    const label = { attach: 'shares a file', ask: 'asks', report: `${e.percent ?? ''}%${e.phase ? ` · ${esc(e.phase)}` : ''}`, question: 'asks', answer: 'answers', done: W().verbs.done, failed: W().verbs.failed, say: 'says', action: '', message: 'says', system: '' }[e.kind] ?? '';
     li.innerHTML = `<div class="who"></div><div><div class="head"><b>${esc(whoLabel(e.who))}</b>${to} ${label} · ${time(e.ts)}</div><div class="text"></div></div>`;
-    $('.text', li).textContent = e.text;
+    $('.text', li).innerHTML = markdown(e.text);
+    if (e.attachment) $('.text', li).replaceChildren(fileChip(e.attachment, true));
     const w = $('.who', li);
     if (e.who === 'archmage' && G.q.archmage) setPortrait(w, { seed: G.q.archmage.name, role: role(G.q.archmage.role), status: 'waiting', style: 'illustrated', size: 64 });
     else if (e.who === 'you') w.textContent = '✋';
-    else if (e.who === 'guild') w.textContent = '✦';
+    else if (e.who === 'guild') w.textContent = W().sigil;
     else {
       const a = G.q.agents.find((x) => x.id === e.who);
       if (a) { setPortrait(w, { seed: a.name, role: role(a.role), status: 'queued', style: 'illustrated', size: 64 }); w.style.cursor = 'pointer'; w.onclick = () => openAgent(a.id); }
@@ -490,7 +602,7 @@ function renderChronicle() {
   $('#lower').classList.toggle('no-chronicle', !show);
   el.classList.toggle('hidden', !show);
   if (!show) return;
-  let html = `<h3 class="head">The Chronicle</h3><div class="md">${markdown(q.chronicle)}</div>`;
+  let html = `<h3 class="head">${esc(W().chronicle)}</h3><div class="md">${markdown(q.chronicle)}</div>`;
   if (q.diff) {
     html += `<div class="diff"><h3>Changes on <code>${esc(q.repo.branch)}</code></h3>
       <p class="muted small">Review with <code>git log ${esc(q.repo.base.slice(0, 8))}..${esc(q.repo.branch)}</code> in <code>${esc(q.repo.root)}</code>, then merge it yourself.</p>
@@ -526,7 +638,7 @@ function answerAgent(id, text) {
 
 function recallAgent(id) {
   const a = G.q.agents.find((x) => x.id === id);
-  if (confirm(`Recall ${a.name} the ${a.title}?`)) api('POST', `/api/quests/${G.q.id}/agents/${id}/cancel`).catch((e) => toast(e.message));
+  if (confirm(`${W().recall} ${fullName(a.name, role(a.role).title ?? a.title)}?`)) api('POST', `/api/quests/${G.q.id}/agents/${id}/cancel`).catch((e) => toast(e.message));
 }
 
 function openAgent(id) {
@@ -541,22 +653,25 @@ function openAgent(id) {
         <p class="muted small">${esc(r.describe ?? '')}${r.model ? ` · ${esc(r.model)}` : ''} · tools: ${esc(Array.isArray(r.tools) ? r.tools.join(', ') : r.tools ?? 'read')}</p></div>
       <div>
         <h2>${esc(a.name)}</h2>
-        <div class="role" style="color:var(--gold)">${esc(a.title)} · ${AGENT_WORD[a.status] ?? a.status} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}</div>
+        <div class="role" style="color:var(--gold)">${esc(r.title ?? a.title)} · ${agentWord(a.status)} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}</div>
         <div class="section"><h4>Task</h4><div class="md">${markdown(a.task)}</div></div>
         ${a.question ? `<div class="section question"><h4>Asks</h4>${esc(a.question)}</div>` : ''}
         ${a.branch ? `<div class="section"><h4>Branch</h4><code>${esc(a.branch)}</code> · ${a.commits ?? 0} commit(s)</div>` : ''}
         ${a.result ? `<div class="section"><h4>Final report</h4><div class="md">${markdown(a.result)}</div></div>` : ''}
-        <div class="section"><h4>Dispatches</h4><div class="reports">${reports.map((e) => `<div><span class="muted small">${time(e.ts)} ${esc(whoLabel(e.who))}${e.to ? ` → ${esc(whoLabel(e.to))}` : ''}${e.percent !== undefined ? ` · ${e.percent}%` : ''}</span><br>${esc(e.text.slice(0, 600))}</div>`).join('') || '<span class="muted">None yet.</span>'}</div></div>
+        ${filesOf(a.id).length ? `<div class="section"><h4>Files</h4><div class="files big"></div></div>` : ''}
+        <div class="section"><h4>Dispatches</h4><div class="reports">${reports.map((e) => `<div><span class="muted small">${time(e.ts)} ${esc(whoLabel(e.who))}${e.to ? ` → ${esc(whoLabel(e.to))}` : ''}${e.percent !== undefined ? ` · ${e.percent}%` : ''}</span><div class="md">${markdown(e.text)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}</div></div>
         <div class="detail-actions">
           ${ACTIVE.has(q.status) && !['cancelled', 'interrupted'].includes(a.status) ? '<button class="btn" data-d="message">Send a message</button>' : ''}
           ${a.status === 'blocked' ? '<button class="btn gold" data-d="answer">Answer</button>' : ''}
-          ${ACTIVE.has(q.status) && ['queued', 'working', 'blocked'].includes(a.status) ? '<button class="btn danger" data-d="recall">Recall</button>' : ''}
+          ${ACTIVE.has(q.status) && ['queued', 'working', 'blocked'].includes(a.status) ? `<button class="btn danger" data-d="recall">${esc(W().recall)}</button>` : ''}
           ${invented ? '<button class="btn" data-d="save-role">Save this role to the catalog</button>' : ''}
         </div>
       </div>
     </div>`;
   const body = $('#agent-detail-body');
   setPortrait($('.portrait', body), { seed: a.name, role: r, status: a.status, style: style(), size: 320 });
+  const fl = $('.files.big', body);
+  if (fl) fl.replaceChildren(...filesOf(a.id).map((f) => fileChip(f.id, true)));
   const on = (k, fn) => { const b = $(`[data-d=${k}]`, body); if (b) b.onclick = fn; };
   on('message', () => { $('#agent-detail').close(); messageAgent(a.id); });
   on('answer', async () => {
@@ -565,8 +680,59 @@ function openAgent(id) {
     if (text) answerAgent(a.id, text);
   });
   on('recall', () => { $('#agent-detail').close(); recallAgent(a.id); });
-  on('save-role', () => api('POST', `/api/roles/${a.role}`, { quest: q.id }).then(() => { toast(`${a.title} is now in the catalog.`); $('#agent-detail').close(); renderParty(); }).catch((e) => toast(e.message)));
+  on('save-role', () => api('POST', `/api/roles/${a.role}`, { quest: q.id }).then(() => { toast(`${r.title ?? a.title} is now in the catalog.`); $('#agent-detail').close(); renderParty(); }).catch((e) => toast(e.message)));
   $('#agent-detail').showModal();
+}
+
+// ── attached files: screenshots, pages and reports the party shares ──
+
+const filesOf = (who) => (G.q?.attachments ?? []).filter((f) => f.who === who);
+const fileUrl = (f, download) => `/api/quests/${G.q.id}/files/${f.id}${download ? '?download=1' : ''}`;
+const isImage = (f) => /^image\//.test(f.type);
+const fileSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+const FILE_ICON = { 'application/pdf': '📄', 'text/html': '🌐', 'text/markdown': '📝', 'video/mp4': '🎞', 'video/webm': '🎞' };
+
+/** A clickable thumbnail (images) or file chip; `withCaption` adds the caption beside it. */
+function fileChip(fid, withCaption = false) {
+  const f = G.q.attachments?.find((x) => x.id === fid);
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = `file-chip${withCaption ? ' wide' : ''}`;
+  if (!f) { el.textContent = 'A file (not loaded yet)'; el.disabled = true; return el; }
+  const icon = FILE_ICON[f.type.split(';')[0]] ?? '📎';
+  el.innerHTML = `${isImage(f) ? `<img src="${fileUrl(f)}" alt="" loading="lazy">` : `<span class="icon">${icon}</span>`}
+    <span class="meta"><b>${esc(f.name)}</b>${withCaption && f.caption ? `<span>${esc(f.caption)}</span>` : ''}<span class="muted small">${fileSize(f.size)}</span></span>`;
+  el.title = f.caption ?? f.name;
+  el.onclick = (ev) => { ev.stopPropagation(); openFile(f); };
+  return el;
+}
+
+/** The last few files of one agent (or the Archmage) as small thumbnails on its card. */
+function renderFiles(box, who) {
+  if (!box) return;
+  const list = filesOf(who);
+  if (box.dataset.n === String(list.length)) return;
+  box.dataset.n = list.length;
+  box.replaceChildren(...list.slice(-4).map((f) => fileChip(f.id)));
+  if (list.length > 4) box.append(Object.assign(document.createElement('span'), { className: 'muted small', textContent: `+${list.length - 4}` }));
+}
+
+async function openFile(f) {
+  const dlg = $('#file-viewer'), body = $('#file-body');
+  $('#file-title').textContent = f.caption ?? f.name;
+  $('#file-meta').innerHTML = `${esc(whoLabel(f.who))} · ${esc(f.name)} · ${fileSize(f.size)} · ${time(f.ts)} ·
+    <a href="${fileUrl(f)}" target="_blank" rel="noopener">Open in a new tab</a> · <a href="${fileUrl(f, true)}">Download</a>`;
+  const type = f.type.split(';')[0];
+  body.innerHTML = '';
+  if (isImage(f)) body.innerHTML = `<img src="${fileUrl(f)}" alt="${esc(f.caption ?? f.name)}">`;
+  else if (type === 'application/pdf') body.innerHTML = `<iframe src="${fileUrl(f)}" title="${esc(f.name)}"></iframe>`;
+  else if (type === 'text/html') body.innerHTML = `<iframe sandbox="allow-scripts" src="${fileUrl(f)}" title="${esc(f.name)}"></iframe>`;
+  else if (type.startsWith('video/')) body.innerHTML = `<video controls src="${fileUrl(f)}"></video>`;
+  else if (/^text\/|json/.test(type)) {
+    const text = await fetch(fileUrl(f)).then((r) => r.text()).catch(() => 'Could not load the file.');
+    body.innerHTML = type === 'text/markdown' ? `<div class="md">${markdown(text)}</div>` : `<pre>${esc(text.slice(0, 500_000))}</pre>`;
+  } else body.innerHTML = `<p class="muted">No preview for this kind of file. <a href="${fileUrl(f, true)}">Download it</a>.</p>`;
+  if (!dlg.open) dlg.showModal();
 }
 
 // ───────────── dialogs ─────────────
@@ -616,6 +782,7 @@ $('#new-quest-form').addEventListener('submit', async (e) => {
 function openSettings() {
   const form = $('#settings-form');
   $('#style-select').innerHTML = STYLES.map((s) => `<option ${s === style() ? 'selected' : ''}>${s}</option>`).join('');
+  $('#theme-select').innerHTML = Object.entries(THEMES).map(([id, t]) => `<option value="${id}" ${id === (G.settings.theme ?? 'fantasy') ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
   for (const k of ['maxConcurrent', 'maxAgents', 'batchSeconds']) form[k].value = G.settings[k];
   $('#roles-json').value = JSON.stringify(G.roles, null, 2);
   $('#roles-error').textContent = '';
@@ -627,7 +794,8 @@ function openSettings() {
 function renderGallery(st) {
   const g = $('#role-gallery');
   g.innerHTML = '';
-  for (const [id, r] of Object.entries(G.roles)) {
+  for (const id of Object.keys(G.roles)) {
+    const r = role(id, null);
     const tile = document.createElement('div');
     tile.className = 'role-tile';
     tile.innerHTML = `<div class="faces"><div></div><div></div></div>
@@ -635,7 +803,7 @@ function renderGallery(st) {
       <div class="muted">${esc(r.blurb ?? '')}</div>
       <div class="small"><code>${esc(id)}</code> · ${esc(r.model ?? 'default model')} · ${r.orchestrator ? 'orchestrator' : esc(Array.isArray(r.tools) ? 'custom tools' : r.tools ?? 'read')}</div>`;
     const [f1, f2] = tile.querySelectorAll('.faces div');
-    setPortrait(f1, { seed: r.name ?? `${id}-Aster`, role: r, status: 'waiting', style: st, size: 160 });
+    setPortrait(f1, { seed: r.orchestrator ? archRole().name : `${id}-Aster`, role: r, status: 'waiting', style: st, size: 160 });
     setPortrait(f2, { seed: `${id}-Bryn`, role: r, status: 'done', style: st, size: 160 });
     if (r.orchestrator) f2.parentElement.style.gridTemplateColumns = '1fr', f2.remove();
     g.append(tile);
@@ -647,9 +815,10 @@ $('#settings-form').addEventListener('submit', async (e) => {
   const f = e.target;
   try {
     G.settings = await api('PUT', '/api/settings', {
-      style: f.style.value, maxConcurrent: Number(f.maxConcurrent.value), maxAgents: Number(f.maxAgents.value), batchSeconds: Number(f.batchSeconds.value),
+      style: f.style.value, theme: f.theme.value, maxConcurrent: Number(f.maxConcurrent.value), maxAgents: Number(f.maxAgents.value), batchSeconds: Number(f.batchSeconds.value),
     });
-    if (G.q) { renderArchmage(); renderParty(); renderPlan(); } else renderHall();
+    applyTheme();
+    rerender();
   } catch (err) { toast(err.message); }
 });
 
@@ -668,4 +837,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector('dialog[open]')) openNewQuest();
 });
 
+/** Redraw the current view, e.g. after the theme changed. */
+function rerender() {
+  renderTabs();
+  if (G.q) buildQuest(); else renderHall();
+}
+
+applyTheme();
 connectGlobal();
