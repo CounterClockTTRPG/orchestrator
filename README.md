@@ -31,9 +31,11 @@ npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777, no
 | `GUILD_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` to keep it off the LAN. |
 | `GUILD_HOME` | `~/.guild` | Quests, settings, the role catalog, worktrees, server log |
 | `GUILD_CLAUDE_BIN` | `claude` | The Claude Code executable |
+| `GUILD_ALLOWED_HOSTS` | | Extra host names the server answers to, comma-separated (e.g. a reverse proxy's). Its own name, `localhost` and its IP addresses are always allowed. |
 
 > **No authentication.** Anyone who can reach the port can start agents, and in edit mode those agents run shell
-> commands. Bind to `127.0.0.1` if your network isn't trusted.
+> commands. Bind to `127.0.0.1` if your network isn't trusted. Other web pages can't drive it from your browser: the
+> server only answers to its own host names, refuses cross-site `Origin`s, and takes JSON bodies only.
 
 To run it as a service, use a systemd user unit:
 
@@ -63,7 +65,7 @@ claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
 ```
 
 Tools: `start_quest(goal, cwd?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
-`list_quests()`, `message_quest(id, text, agentId?)` and `cancel_quest(id)`. `cwd` defaults to the session's project,
+`list_quests()`, `message_quest(id, text, agentId?)`, `resume_quest(id)` and `cancel_quest(id)`. `cwd` defaults to the session's project,
 and MCP quests default to automatic planning. If the server isn't running, the MCP server starts it in the background.
 Set `GUILD_URL` to use a server elsewhere; a remote server is never auto-started.
 
@@ -88,6 +90,7 @@ curl -s localhost:7777/api/quests/<id>               # full state, including the
 | POST | `/api/quests/:id/plan/approve` | `{ agents?: [{ role, task }] }`, the plan, optionally edited |
 | POST | `/api/quests/:id/message` | `{ text }` to the Archmage |
 | POST | `/api/quests/:id/cancel` | abandon the quest |
+| POST | `/api/quests/:id/resume` | carry on with a quest a server restart *interrupted* |
 | POST | `/api/quests/:id/agents/:aid/message` · `/answer` · `/cancel` | `{ text }` |
 | GET/PUT | `/api/roles` · POST `/api/roles/:id` | the role catalog; save an invented role with `{ quest }` |
 | GET/PUT | `/api/settings` | `style`, `maxConcurrent`, `maxAgents`, `batchSeconds` |
@@ -112,7 +115,11 @@ other Claude Code ─ MCP (bin/guild-mcp.js) ────┤                    
 - **Edit mode:** worktrees live in `~/.guild/worktrees/<quest>/`. Agent branches are `guild/<quest>/<agent>`, the
   merged result is `guild/<quest>/party`, and leftover uncommitted work is committed before worktrees are removed.
 - **Persistence:** `~/.guild/quests/<id>/quest.json` and `events.jsonl`. Quests that were running when the server
-  stopped come back as *interrupted*.
+  stopped come back as *interrupted*; **Resume** restarts the Archmage and the interrupted agents from their sessions
+  (`claude --resume`).
+- **Replay:** stored events are numbered. A client that reconnects to `/api/quests/:id/events` with `?since=<seq>` or
+  `Last-Event-ID` (EventSource sends it by itself) gets the events it missed instead of a fresh snapshot.
+- **Running time** is shown for the quest and every agent (wall-clock time, less any time the server was down).
 
 See [DESIGN.md](DESIGN.md) for the decisions behind it.
 

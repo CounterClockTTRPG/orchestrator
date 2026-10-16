@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Guild } from './lib/guild.js';
+import { allowedHosts, checkOrigin } from './lib/guard.js';
+import * as store from './lib/store.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.GUILD_PORT) || 7777;
@@ -28,11 +30,14 @@ const json = (res, status, data) => {
 
 async function body(req) {
   let raw = '';
+  // Only JSON: a browser can send a text/plain or form body to any site without a CORS preflight.
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
   for await (const chunk of req) {
     raw += chunk;
     if (raw.length > 5_000_000) throw new HttpError(413, 'Body too large');
   }
   if (!raw) return {};
+  if (type !== 'application/json') throw new HttpError(415, 'Send the body as application/json');
   try { return JSON.parse(raw); } catch { throw new HttpError(400, 'Invalid JSON'); }
 }
 
@@ -46,11 +51,14 @@ function serveStatic(res, file) {
 
 function sse(req, res, onOpen) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
-  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // An id lets EventSource send Last-Event-ID when it reconnects.
+  const send = (event, data, id) => res.write(`${id === undefined ? '' : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
   const cleanup = onOpen(send);
   req.on('close', () => { clearInterval(ping); cleanup(); });
 }
+
+let hosts = allowedHosts(), hostsAt = Date.now();
 
 const questOf = (id) => {
   const q = guild.quests.get(id);
@@ -74,11 +82,12 @@ const API = {
     ['POST', '/api/quests', '{ goal, cwd, mode: "read"|"edit", planning: "review"|"auto", maxAgents? } → quest state'],
     ['GET', '/api/quests', 'quest summaries'],
     ['GET', '/api/quests/:id', 'full quest state, including the chronicle when done'],
-    ['GET', '/api/quests/:id/events', 'SSE: snapshot, then quest, archmage, agent, activity, log, report, plan, roles, chronicle'],
+    ['GET', '/api/quests/:id/events', 'SSE: snapshot, then quest, archmage, agent, activity, log, report, plan, roles, chronicle. Stored events carry an id (seq); ?since=<seq> or Last-Event-ID replays the events after it instead of the snapshot'],
     ['GET', '/api/events', 'SSE: state, then summary (one per quest change), settings, roles'],
     ['POST', '/api/quests/:id/plan/approve', '{ agents?: [{ role, task }] }: approve the plan, optionally edited'],
     ['POST', '/api/quests/:id/message', '{ text } to the Archmage'],
     ['POST', '/api/quests/:id/cancel', 'abandon the quest'],
+    ['POST', '/api/quests/:id/resume', 'carry on with a quest interrupted by a server restart (status "interrupted")'],
     ['POST', '/api/quests/:id/agents/:aid/message', '{ text } to one agent'],
     ['POST', '/api/quests/:id/agents/:aid/answer', '{ text }: answer an agent blocked on a question'],
     ['GET', '/api/quests/:id/files/:fid', 'a file an agent or the Archmage attached (screenshot, report); ?download=1 saves it'],
@@ -114,17 +123,25 @@ const routes = [
   ['GET', '/api/quests', () => guild.list().map((q) => q.summary())],
   ['POST', '/api/quests', async (p, req) => (await guild.createQuest(await body(req))).state],
   ['GET', '/api/quests/:id', ({ id }) => questOf(id).state],
-  ['GET', '/api/quests/:id/events', ({ id }, req, res) => {
+  ['GET', '/api/quests/:id/events', ({ id }, req, res, url) => {
     const q = questOf(id);
+    // ?since=<seq> (or Last-Event-ID, sent by a reconnecting EventSource) replays the stored events after it
+    // instead of sending a snapshot. Reading the log and subscribing happen in one tick, so nothing falls between.
+    const since = url.searchParams.get('since') ?? req.headers['last-event-id'];
     sse(req, res, (send) => {
-      send('snapshot', q.state);
-      const on = (e) => { if (e.quest === id) send(e.type, e); };
+      if (since !== undefined && since !== null && /^\d+$/.test(String(since).trim())) {
+        for (const e of store.readEventsSince(id, Number(since))) send(e.type, e, e.seq);
+      } else {
+        send('snapshot', q.state, q.state.seq ?? 0);
+      }
+      const on = (e) => { if (e.quest === id) send(e.type, e, e.seq); };
       guild.on('quest', on);
       return () => guild.off('quest', on);
     });
   }],
   ['POST', '/api/quests/:id/plan/approve', async ({ id }, req) => ({ party: questOf(id).approvePlan((await body(req)).agents) })],
   ['POST', '/api/quests/:id/cancel', async ({ id }) => { await questOf(id).cancel(); return { ok: true }; }],
+  ['POST', '/api/quests/:id/resume', async ({ id }) => questOf(id).resume()],
   ['POST', '/api/quests/:id/message', async ({ id }, req) => { questOf(id).messageArchmage(need((await body(req)).text)); return { ok: true }; }],
   ['POST', '/api/quests/:id/agents/:aid/cancel', ({ id, aid }) => ({ text: questOf(id).cancelAgent(aid, 'you') })],
   ['POST', '/api/quests/:id/agents/:aid/message', async ({ id, aid }, req) => ({ text: questOf(id).messageAgent(aid, need((await body(req)).text), 'you') })],
@@ -183,6 +200,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = decodeURIComponent(url.pathname);
   try {
+    if (Date.now() - hostsAt > 60_000) { hosts = allowedHosts(); hostsAt = Date.now(); } // addresses change (DHCP, VPN)
+    checkOrigin(req.headers, hosts);
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveStatic(res, path.join(ROOT, 'web', 'index.html'));
     for (const [prefix, dir] of Object.entries(STATIC)) {
       if (req.method === 'GET' && p.startsWith(prefix)) {

@@ -14,7 +14,7 @@ council live, with portraitgen portraits.
 | Orchestrator | A **live** Claude session that receives reports, steers (messages, recruits, cancels) and finally synthesizes. |
 | Wake-ups | Routine progress reports are batched and delivered about every 60 s. `blocked`, `done` and `failed` wake the Archmage at once. |
 | Party shape | **Flat**: only the Archmage recruits. Subagents have the built-in Task/Agent tool disabled. |
-| Edit output | Agents commit on `guild/<quest>/<agent>`. The Archmage merges them into `guild/<quest>` and resolves conflicts. The quest then **stops for your review**; nothing touches your main branch. |
+| Edit output | Agents commit on `guild/<quest>/<agent>`. The Archmage merges them into `guild/<quest>/party` and resolves conflicts. The quest then **stops for your review**; nothing touches your main branch. |
 | Non-git dir | Edit mode is refused. Read-only works anywhere. |
 | Browser controls | Cancel an agent or the quest, message a running agent, answer a blocked agent (your answer wins over the Archmage's). |
 | Roles | `roles.json` catalog (look, prompt, tools, model). The planner may **invent** a role; it gets a derived look and the UI offers *Save to catalog*. |
@@ -23,7 +23,7 @@ council live, with portraitgen portraits.
 | Interfaces | **REST + SSE** (the core; the UI uses it) and an **MCP server** for Claude Code sessions in other projects. |
 | Persistence | Several quests at once, all saved to disk and browsable after a restart. |
 | Guardrails | Max agents per quest (default 6), a model per role, a global concurrency cap (default 4 running agents; the rest queue). No cost budget, but cost is shown. |
-| Access | Binds `0.0.0.0` on the LAN, **no auth** (by choice; anyone on the network can start agents that edit files). |
+| Access | Binds `0.0.0.0` on the LAN, **no auth** (by choice; anyone on the network can start agents that edit files). Requests must name the server in `Host` (against DNS rebinding), a browser `Origin` must be the server itself, and bodies must be `application/json`, so other web pages cannot drive it. |
 | Hosting | Long-running service (`npm start` / systemd user unit). The MCP server auto-starts it when it isn't running. |
 | Layout | **Council table**: the Archmage at the top centre, the party in an arc below, glowing threads with a dispatch orb flying up on each report, the Dispatch scroll (all reports), and the Chronicle (final result). |
 
@@ -45,7 +45,7 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
     mode it dispatches at once.
   - `recruit_agent(role, task, name?)`, `message_agent(id, text)`, `cancel_agent(id)`, `list_party()`
   - `answer_agent(id, text)` replies to a blocked agent.
-  - `merge_party()` (edit mode) merges the agent branches into `guild/<quest>` in an integration worktree and
+  - `merge_party()` (edit mode) merges the agent branches into `guild/<quest>/party` in an integration worktree and
     returns the conflicts. The Archmage resolves them with Bash/Edit in that worktree.
   - `finish_quest(chronicle)` writes the final markdown result and ends the quest.
 - **Subagents**: MCP tools from `lib/report-mcp.js`:
@@ -63,8 +63,8 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
 - Quest start: verify the target is a git repo; record `base = HEAD`.
 - Each agent: `git worktree add ~/.guild/worktrees/<quest>/<agent> -b guild/<quest>/<agent> <base>`. The agent runs
   there with Edit/Write/Bash allowed and is told to commit its work.
-- `merge_party`: integration worktree on `guild/<quest>` from `base`, merging each agent branch in order.
-- End: the UI shows the combined diff (`base..guild/<quest>`) and the branch name. Agent worktrees are removed and
+- `merge_party`: integration worktree on `guild/<quest>/party` from `base`, merging each agent branch in order.
+- End: the UI shows the combined diff (`base..guild/<quest>/party`) and the branch name. Agent worktrees are removed and
   their branches kept. Your checkout is never modified.
 
 ## Roles and looks (`roles.json`)
@@ -98,10 +98,11 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
 |---|---|---|
 | POST | `/api/quests` | `{ goal, cwd, mode: "read"\|"edit", planning: "review"\|"auto", maxAgents? }` returns the quest |
 | GET | `/api/quests` / `/api/quests/:id` | list / full state |
-| GET | `/api/quests/:id/events` | SSE: `snapshot`, then `agent`, `report`, `activity`, `plan`, `chronicle`, `quest` events (`?since=` to replay) |
+| GET | `/api/quests/:id/events` | SSE: `snapshot`, then `agent`, `report`, `activity`, `plan`, `chronicle`, `quest` events. Stored events carry an id (`seq`); `?since=<seq>` or `Last-Event-ID` replays the ones after it instead of the snapshot |
 | GET | `/api/events` | SSE for all quests (the list view) |
 | POST | `/api/quests/:id/plan/approve` | `{ agents[] }` (edited plan) dispatches |
 | POST | `/api/quests/:id/cancel` · `/agents/:aid/cancel` | cancel |
+| POST | `/api/quests/:id/resume` | resume an *interrupted* quest |
 | POST | `/api/quests/:id/agents/:aid/message` · `/answer` | `{ text }` |
 | POST | `/api/quests/:id/message` | a note to the Archmage |
 | GET/PUT | `/api/roles` | role catalog; `POST /api/roles/:id` saves an invented role |
@@ -114,14 +115,17 @@ Internal (MCP tools to server, the same HTTP): `/internal/quests/:id/...`.
 Add it once with `claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js`. Tools:
 `start_quest(goal, cwd?, mode?, planning?, maxAgents?)` (cwd defaults to the caller's directory) returns the id and
 the browser URL; also `quest_status(id)`, `wait_for_quest(id, timeoutSec?)` (returns the chronicle when done),
-`list_quests()`, `message_quest(id, text)` and `cancel_quest(id)`. If the server isn't reachable, it starts it
+`list_quests()`, `message_quest(id, text)`, `resume_quest(id)` and `cancel_quest(id)`. If the server isn't reachable, it starts it
 detached and retries.
 
 ## Storage
 
 `~/.guild/quests/<id>/quest.json` (state, written on change) and `events.jsonl` (append-only; the SSE replay source),
 plus `~/.guild/worktrees/`. On restart, quests that were running are marked **interrupted**; their session ids are
-kept so a later *Resume* can use `claude --resume`. Resume is not in v1.
+kept, and *Resume* (`POST /api/quests/:id/resume`) carries on: the Archmage and every interrupted agent are restarted
+with `claude --resume` in their worktrees (re-created from their branches if removed), told what happened, and the
+Archmage gets the party's state. Agents that never set out start afresh; a question that was open must be asked again.
+The downtime is kept in `pausedMs` and left out of running times.
 
 ## UI
 
@@ -150,4 +154,4 @@ kept so a later *Resume* can use `claude --resume`. Resume is not in v1.
 
 ## Out of scope for v1
 
-Auth, cost budgets, nested recruiting, resuming interrupted quests, pushing or opening PRs.
+Auth, cost budgets, nested recruiting, pushing or opening PRs. (Resuming interrupted quests was added after v1.)

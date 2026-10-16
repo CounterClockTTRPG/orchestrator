@@ -3,6 +3,7 @@
 import { setPortrait, setPortraitTheme, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
 import { theme, themedRole, THEMES } from './themes.js';
+import { agentElapsed, questElapsed, duration } from './elapsed.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const ACTIVE = new Set(['planning', 'awaiting-approval', 'questing']);
@@ -125,7 +126,7 @@ function renderHall() {
       <a class="quest-card" href="#/quest/${q.id}">
         <div class="meta"><span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
           ${q.mode === 'edit' ? '<span class="badge edit">edit</span>' : '<span class="badge">read-only</span>'}
-          <span>${when(q.createdAt)}</span><span>${money(q.costUsd)}</span></div>
+          <span>${when(q.createdAt)}</span><span>${money(q.costUsd)}</span><span>${duration(questElapsed(q))}</span></div>
         <div class="goal">${esc(q.goal)}</div>
         <div class="meta"><code>${esc(q.cwd)}</code></div>
         <div class="mini-party" data-quest="${q.id}"></div>
@@ -155,7 +156,7 @@ function openQuest(id) {
   const es = new EventSource(`/api/quests/${id}/events`);
   G.es = es;
   es.addEventListener('snapshot', (e) => { G.q = JSON.parse(e.data); buildQuest(); });
-  es.addEventListener('quest', (e) => { const d = JSON.parse(e.data); G.q.status = d.status; G.q.finishedAt = d.finishedAt; renderHead(); renderPlan(); renderArchmage(); renderTabs(); });
+  es.addEventListener('quest', (e) => { const d = JSON.parse(e.data); G.q.status = d.status; G.q.finishedAt = d.finishedAt; G.q.pausedMs = d.pausedMs; renderHead(); renderPlan(); renderArchmage(); renderTabs(); });
   es.addEventListener('archmage', (e) => { G.q.archmage = JSON.parse(e.data).archmage; renderArchmage(); });
   es.addEventListener('agent', (e) => {
     const { agent } = JSON.parse(e.data);
@@ -272,10 +273,12 @@ function renderHead() {
         ${q.repo?.branch ? `<span>branch <code>${esc(q.repo.branch)}</code></span>` : ''}
         <span>${q.agents.length} ${esc(W().inParty)}${working ? `, ${working} ${esc(W().afield)}` : ''}</span>
         <span>${money(total)}</span>
+        <span class="elapsed" title="Running time">${duration(questElapsed(q))}</span>
         <span>${when(q.createdAt)}</span>
       </div>
     </div>
     <div class="row" style="flex:none">
+      ${q.status === 'interrupted' ? '<button class="btn gold" data-resume-quest title="Carry on where the server stopped">Resume</button>' : ''}
       ${active ? `<button class="btn danger" data-cancel-quest>${esc(W().abandon)}</button>` : ''}
     </div>`;
   const goal = $('#q-head .goal'), more = $('#q-head .goal-more');
@@ -283,7 +286,21 @@ function renderHead() {
   more.onclick = () => { G.goalOpen = !G.goalOpen; renderHead(); };
   const c = $('[data-cancel-quest]');
   if (c) c.onclick = () => { if (confirm(W().abandonConfirm)) api('POST', `/api/quests/${q.id}/cancel`).catch((e) => toast(e.message)); };
+  const r = $('[data-resume-quest]');
+  if (r) r.onclick = () => { r.disabled = true; api('POST', `/api/quests/${q.id}/resume`).catch((e) => { r.disabled = false; toast(e.message); }); };
 }
+
+// Running times tick once a second while the quest is open.
+setInterval(() => {
+  const q = G.q;
+  if (!q || !ACTIVE.has(q.status)) return;
+  const head = $('#q-head .elapsed');
+  if (head) head.textContent = duration(questElapsed(q));
+  for (const a of q.agents) {
+    const el = G.cards.get(a.id);
+    if (el) $('.elapsed', el).textContent = duration(agentElapsed(a));
+  }
+}, 1000);
 
 function renderArchmage() {
   const q = G.q, a = q?.archmage, el = $('#archmage-card');
@@ -365,7 +382,7 @@ function renderParty() {
         <div class="activity"></div>
         <div class="files"></div>
         <div class="runebar"><div class="fill"></div><div class="ticks"></div><span class="pct"></span></div>
-        <div class="foot"><span class="cost"></span><span>
+        <div class="foot"><span class="cost"><span class="money"></span> <span class="elapsed" title="Running time"></span></span><span>
           <button class="icon-btn" data-act="details" title="Show the full task and reports">⤢</button>
           <button class="icon-btn" data-act="message" title="Send a message">✉</button>
           <button class="icon-btn" data-act="recall" title="${esc(W().recallTitle)}">✕</button>
@@ -413,7 +430,8 @@ function updateCard(el, a) {
   $('.activity', el).textContent = a.activity ?? '';
   $('.fill', el).style.width = `${a.status === 'done' ? 100 : a.percent ?? 0}%`;
   $('.pct', el).textContent = `${a.status === 'done' ? 100 : a.percent ?? 0}%`;
-  $('.cost', el).textContent = money(a.costUsd);
+  $('.money', el).textContent = money(a.costUsd);
+  $('.elapsed', el).textContent = duration(agentElapsed(a));
   renderFiles($('.files', el), a.id);
   const finished = ['done', 'failed', 'cancelled', 'interrupted'].includes(a.status);
   $('[data-act=recall]', el).classList.toggle('hidden', finished || !ACTIVE.has(G.q.status));
@@ -653,7 +671,7 @@ function openAgent(id) {
         <p class="muted small">${esc(r.describe ?? '')}${r.model ? ` · ${esc(r.model)}` : ''} · tools: ${esc(Array.isArray(r.tools) ? r.tools.join(', ') : r.tools ?? 'read')}</p></div>
       <div>
         <h2>${esc(a.name)}</h2>
-        <div class="role" style="color:var(--gold)">${esc(r.title ?? a.title)} · ${agentWord(a.status)} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}</div>
+        <div class="role" style="color:var(--gold)">${esc(r.title ?? a.title)} · ${agentWord(a.status)} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}${agentElapsed(a) != null ? ` · ${duration(agentElapsed(a))}` : ''}</div>
         <div class="section"><h4>Task</h4><div class="md">${markdown(a.task)}</div></div>
         ${a.question ? `<div class="section question"><h4>Asks</h4>${esc(a.question)}</div>` : ''}
         ${a.branch ? `<div class="section"><h4>Branch</h4><code>${esc(a.branch)}</code> · ${a.commits ?? 0} commit(s)</div>` : ''}

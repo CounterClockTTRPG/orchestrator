@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serveMcp, api } from '../lib/mcp.js';
+import { agentElapsed, questElapsed, duration } from '../web/elapsed.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const URL_ = process.env.GUILD_URL || `http://127.0.0.1:${process.env.GUILD_PORT || 7777}`;
@@ -40,14 +41,15 @@ const browserUrl = (id) => `${URL_.replace('127.0.0.1', 'localhost')}/#/quest/${
 
 function status(q) {
   const lines = [
-    `Quest ${q.id} — ${q.status}${q.costUsd ? ` ($${q.costUsd.toFixed(2)})` : ''}`,
+    `Quest ${q.id} — ${q.status}, ${duration(questElapsed(q))}${q.costUsd ? ` ($${q.costUsd.toFixed(2)})` : ''}`,
     `Goal: ${q.goal}`,
     `Watch: ${browserUrl(q.id)}`,
   ];
   if (q.archmage?.thought) lines.push(`Archmage: ${q.archmage.thought}`);
   if (q.status === 'awaiting-approval') lines.push('The plan awaits approval in the browser.');
   for (const a of q.agents ?? []) {
-    lines.push(`- ${a.name} the ${a.title} (${a.id}): ${a.status} ${a.percent}%${a.phase ? `, ${a.phase}` : ''}${a.question ? ` — asks: ${a.question}` : a.lastReport ? ` — ${a.lastReport}` : ''}`);
+    const t = agentElapsed(a);
+    lines.push(`- ${a.name} the ${a.title} (${a.id}): ${a.status} ${a.percent}%${t == null ? '' : ` in ${duration(t)}`}${a.phase ? `, ${a.phase}` : ''}${a.question ? ` — asks: ${a.question}` : a.lastReport ? ` — ${a.lastReport}` : ''}`);
   }
   if (q.repo?.branch && q.status === 'done') lines.push(`Branch for review: ${q.repo.branch}`);
   return lines.join('\n');
@@ -133,6 +135,12 @@ serveMcp({
         await call('POST', `/api/quests/${id}/message`, { text });
         return 'The Archmage has your message.';
       },
+    },
+    {
+      name: 'resume_quest',
+      description: 'Resume a quest that a server restart interrupted (status "interrupted"): the Archmage and the interrupted agents carry on from their sessions.',
+      inputSchema: { type: 'object', properties: { id }, required: ['id'], additionalProperties: false },
+      handler: async ({ id }) => `Quest ${id} resumed.\n\n${status(await call('POST', `/api/quests/${id}/resume`))}`,
     },
     {
       name: 'cancel_quest',
