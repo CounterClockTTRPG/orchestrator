@@ -79,7 +79,7 @@ const API = {
   mcp: 'From Claude Code: claude mcp add guild -e GUILD_URL=<this server> -- node <guild repo>/bin/guild-mcp.js',
   auth: 'None. Anyone who can reach the port can start agents.',
   endpoints: [
-    ['POST', '/api/quests', '{ goal, cwd, mode: "read"|"edit", planning: "review"|"auto", maxAgents? } → quest state'],
+    ['POST', '/api/quests', '{ goal, cwd, mode: "read"|"edit", planning: "review"|"auto", maxAgents?, target?, sync?, deliver?: "offer"|"auto", checkIn? } → quest state. Edit mode: target is the branch to deliver to (default: the one checked out in cwd), sync lists more branches whose latest work is merged in before finishing, checkIn is the rule for changes the human approves personally'],
     ['GET', '/api/quests', 'quest summaries'],
     ['GET', '/api/quests/:id', 'full quest state, including the chronicle when done'],
     ['GET', '/api/quests/:id/events', 'SSE: snapshot, then quest, archmage, agent, activity, log, report, plan, roles, chronicle. Stored events carry an id (seq); ?since=<seq> or Last-Event-ID replays the events after it instead of the snapshot'],
@@ -88,6 +88,7 @@ const API = {
     ['POST', '/api/quests/:id/message', '{ text } to the Archmage'],
     ['POST', '/api/quests/:id/cancel', 'abandon the quest'],
     ['POST', '/api/quests/:id/resume', 'carry on with a quest interrupted by a server restart (status "interrupted")'],
+    ['POST', '/api/quests/:id/deliver', 'fast-forward the target branch to a finished edit quest\'s result'],
     ['POST', '/api/quests/:id/agents/:aid/message', '{ text } to one agent'],
     ['POST', '/api/quests/:id/agents/:aid/answer', '{ text }: answer an agent blocked on a question'],
     ['GET', '/api/quests/:id/files/:fid', 'a file an agent or the Archmage attached (screenshot, report); ?download=1 saves it'],
@@ -143,6 +144,7 @@ const routes = [
   ['POST', '/api/quests/:id/plan/approve', async ({ id }, req) => ({ party: questOf(id).approvePlan((await body(req)).agents) })],
   ['POST', '/api/quests/:id/cancel', async ({ id }) => { await questOf(id).cancel(); return { ok: true }; }],
   ['POST', '/api/quests/:id/resume', async ({ id }) => questOf(id).resume()],
+  ['POST', '/api/quests/:id/deliver', async ({ id }) => questOf(id).deliver('you')],
   ['POST', '/api/quests/:id/message', async ({ id }, req) => { questOf(id).messageArchmage(need((await body(req)).text)); return { ok: true }; }],
   ['POST', '/api/quests/:id/agents/:aid/cancel', ({ id, aid }) => ({ text: questOf(id).cancelAgent(aid, 'you') })],
   ['POST', '/api/quests/:id/agents/:aid/start', ({ id, aid }) => ({ text: questOf(id).startNow(aid, 'you') })],
@@ -179,7 +181,7 @@ const routes = [
   // Internal: called by the MCP servers of the Archmage and the party.
   ['POST', '/internal/quests/:id/agents/:aid/report', async ({ id, aid }, req) => questOf(id).report(aid, await body(req))],
   ['POST', '/internal/quests/:id/agents/:aid/attach', async ({ id, aid }, req) => ({ text: questOf(id).attach(aid, await body(req)) })],
-  ['POST', '/internal/quests/:id/agents/:aid/ask', async ({ id, aid }, req) => questOf(id).ask(aid, need((await body(req)).question))],
+  ['POST', '/internal/quests/:id/agents/:aid/ask', async ({ id, aid }, req) => { const b = await body(req); return questOf(id).ask(aid, need(b.question), b.human === true); }],
   ['GET', '/internal/quests/:id/agents/:aid/ask/:askId', ({ id, askId }, req, res, url) => {
     questOf(id).waitAnswer(askId, Number(url.searchParams.get('wait')) || 30, (r) => json(res, 200, r));
   }],

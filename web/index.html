@@ -48,6 +48,20 @@
           <input name="maxAgents" type="number" min="1" max="20" value="6">
         </label>
       </div>
+      <div class="edit-only hidden">
+        <div class="row">
+          <label>Deliver to branch
+            <input name="target" placeholder="the branch checked out there" spellcheck="false">
+          </label>
+          <label>Also merge in before finishing
+            <input name="sync" placeholder="other branches with work in progress" spellcheck="false">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" name="deliverAuto"> Fast-forward that branch as soon as the quest is done (otherwise you get a button)</label>
+      </div>
+      <label>Check-ins (changes the party asks you about first)
+        <textarea name="checkIn" rows="2" placeholder="Nothing: the party decides on its own"></textarea>
+      </label>
       <p class="error" id="new-quest-error"></p>
       <div class="actions">
         <button type="button" data-close class="btn ghost">Cancel</button>
@@ -68,6 +82,9 @@
         <label class="narrow">Report batch (s) <input name="batchSeconds" type="number" min="5" max="600"></label>
         <label class="narrow check"><input name="animate" type="checkbox"> Animated portraits</label>
       </div>
+      <label>Default check-in rule (changes the party asks you about first; empty for none)
+        <textarea name="checkIn" rows="2"></textarea>
+      </label>
       <h3>Role catalog</h3>
       <div id="role-gallery" class="role-gallery"></div>
       <details>

@@ -50,7 +50,7 @@ function status(q) {
   if (q.status === 'awaiting-approval') lines.push('The plan awaits approval in the browser.');
   for (const a of q.agents ?? []) {
     const t = agentElapsed(a);
-    lines.push(`- ${a.name} the ${a.title} (${a.id}), “${agentTitle(a)}”: ${a.status} ${a.percent}%${t == null ? '' : ` in ${duration(t)}`}${a.phase ? `, ${a.phase}` : ''}${a.question ? ` — asks: ${a.question}` : a.lastReport ? ` — ${a.lastReport}` : ''}`);
+    lines.push(`- ${a.name} the ${a.title} (${a.id}), “${agentTitle(a)}”: ${a.checkIn && a.status === 'blocked' ? 'CHECK-IN, needs the human' : a.status} ${a.percent}%${t == null ? '' : ` in ${duration(t)}`}${a.phase ? `, ${a.phase}` : ''}${a.question ? ` — asks: ${a.question}` : a.lastReport ? ` — ${a.lastReport}` : ''}`);
   }
   if (q.repo?.branch && q.status === 'done') lines.push(`Branch for review: ${q.repo.branch}`);
   return lines.join('\n');
@@ -59,6 +59,14 @@ function status(q) {
 function result(q) {
   let out = `${status(q)}\n\n## Chronicle\n\n${q.chronicle ?? '(none)'}`;
   if (q.diff?.stat) out += `\n\n## Changes (${q.repo?.branch ?? 'quest branch'})\n\n${q.diff.stat}`;
+  const d = q.delivery;
+  if (d?.target) {
+    out += `\n\n## Delivery\n\n${{
+      delivered: `${d.target} was fast-forwarded to ${d.commit.slice(0, 8)}.`,
+      ready: `${q.repo.branch} (${d.commit.slice(0, 8)}) can fast-forward ${d.target}: call deliver_quest.`,
+      moved: `${d.target} moved on since the last merge: merge ${q.repo.branch} into it yourself.`,
+    }[d.status] ?? ''}`;
+  }
   return out;
 }
 
@@ -79,12 +87,16 @@ serveMcp({
           mode: { type: 'string', enum: ['read', 'edit'], description: 'read: research only (default). edit: agents change code on branches; the result is a branch to review' },
           planning: { type: 'string', enum: ['review', 'auto'], description: 'review: the human approves the plan in the browser. auto: dispatch at once (default here)' },
           maxAgents: { type: 'number', description: 'Party size limit (default 6)' },
+          target: { type: 'string', description: 'Edit mode: the branch the result is for (default: the one checked out in cwd). The party starts from it and its latest work is merged in before finishing' },
+          sync: { type: 'array', items: { type: 'string' }, description: 'Edit mode: more branches with work in progress elsewhere, merged in before finishing so clashes surface inside the quest' },
+          deliver: { type: 'string', enum: ['offer', 'auto'], description: 'Edit mode: auto fast-forwards the target when done; offer (default) waits for deliver_quest or the button' },
+          checkIn: { type: 'string', description: 'Changes the party must ask the human about first, e.g. "any balance number by more than 20%" (default: the server setting; empty string for none)' },
         },
         required: ['goal'],
         additionalProperties: false,
       },
-      handler: async ({ goal, cwd, mode = 'read', planning = 'auto', maxAgents }) => {
-        const q = await call('POST', '/api/quests', { goal, cwd: cwd || process.cwd(), mode, planning, maxAgents });
+      handler: async ({ goal, cwd, mode = 'read', planning = 'auto', maxAgents, target, sync, deliver, checkIn }) => {
+        const q = await call('POST', '/api/quests', { goal, cwd: cwd || process.cwd(), mode, planning, maxAgents, target, sync, deliver, checkIn });
         return `Quest ${q.id} started (${mode}, ${planning} planning).\nWatch it at ${browserUrl(q.id)}\nUse wait_for_quest to get the result.`;
       },
     },
@@ -142,6 +154,12 @@ serveMcp({
       description: 'Resume a quest that a server restart interrupted (status "interrupted"): the Archmage and the interrupted agents carry on from their sessions.',
       inputSchema: { type: 'object', properties: { id }, required: ['id'], additionalProperties: false },
       handler: async ({ id }) => `Quest ${id} resumed.\n\n${status(await call('POST', `/api/quests/${id}/resume`))}`,
+    },
+    {
+      name: 'deliver_quest',
+      description: 'Fast-forward a finished edit quest\'s target branch to its result (refused if the branch moved on, or is checked out with uncommitted changes).',
+      inputSchema: { type: 'object', properties: { id }, required: ['id'], additionalProperties: false },
+      handler: async ({ id }) => { const d = await call('POST', `/api/quests/${id}/deliver`); return `${d.target} is now at ${d.commit.slice(0, 8)}.`; },
     },
     {
       name: 'cancel_quest',

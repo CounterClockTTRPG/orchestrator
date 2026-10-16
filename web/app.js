@@ -212,7 +212,7 @@ function openQuest(id) {
   es.addEventListener('report', (e) => { const d = JSON.parse(e.data); sendOrb(d.agentId, 'up'); if (d.phase !== 'blocked') speak(d.agentId, d.message); });
   es.addEventListener('plan', (e) => { const d = JSON.parse(e.data); G.q.plan = d.plan; G.q.roles = d.roles; renderPlan(); });
   es.addEventListener('roles', (e) => { G.q.roles = JSON.parse(e.data).roles; renderParty(); });
-  es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diff = d.diff; renderChronicle(); });
+  es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diff = d.diff; G.q.delivery = d.delivery; renderChronicle(); });
   es.onerror = () => { if (!G.q) $('#view').innerHTML = `<div class="empty">${esc(W().notFound)}</div>`; };
 }
 
@@ -303,7 +303,8 @@ function renderHead() {
         ${q.mode === 'edit' ? '<span class="badge edit">edit mode</span>' : '<span class="badge">read-only</span>'}
         <span class="badge">${q.planning === 'review' ? 'reviewed plan' : 'automatic plan'}</span>
         <code>${esc(q.cwd)}</code>
-        ${q.repo?.branch ? `<span>branch <code>${esc(q.repo.branch)}</code></span>` : ''}
+        ${q.repo?.branch ? `<span>branch <code>${esc(q.repo.branch)}</code>${q.repo.target ? ` → <code>${esc(q.repo.target)}</code>` : ''}</span>` : ''}
+        ${q.checkIn ? `<span class="badge" title="${esc(q.checkIn)}">check-ins</span>` : ''}
         <span>${q.agents.length} ${esc(W().inParty)}${working ? `, ${working} ${esc(W().afield)}` : ''}</span>
         <span>${money(total)}</span>
         <span class="elapsed" title="Running time">${duration(questElapsed(q))}</span>
@@ -479,7 +480,8 @@ function updateCard(el, a) {
   $('.after', el).classList.toggle('hidden', !after);
   const qb = $('.question', el);
   qb.classList.toggle('hidden', a.status !== 'blocked' || !a.question);
-  $('.q', qb).textContent = a.question ? `“${a.question}”` : '';
+  $('.q', qb).textContent = a.question ? `${a.checkIn ? 'Check-in, needs your decision: ' : ''}“${a.question}”` : '';
+  qb.classList.toggle('check-in', !!a.checkIn);
   const rep = a.status === 'done' || a.status === 'failed' ? a.result : a.lastReport;
   $('.report', el).innerHTML = rep ? `${a.phase && a.status !== 'done' ? `<span class="phase">${esc(a.phase)}:</span> ` : ''}${esc(firstLines(rep))}` : '';
   $('.activity', el).textContent = a.activity ?? '';
@@ -716,11 +718,29 @@ function renderChronicle() {
   let html = `<h3 class="head">${esc(W().chronicle)}</h3><div class="md">${markdown(q.chronicle)}</div>`;
   if (q.diff) {
     html += `<div class="diff"><h3>Changes on <code>${esc(q.repo.branch)}</code></h3>
-      <p class="muted small">Review with <code>git log ${esc(q.repo.base.slice(0, 8))}..${esc(q.repo.branch)}</code> in <code>${esc(q.repo.root)}</code>, then merge it yourself.</p>
+      <p class="muted small">Review with <code>git log ${esc(q.repo.base.slice(0, 8))}..${esc(q.repo.branch)}</code> in <code>${esc(q.repo.root)}</code>${q.delivery?.target ? '' : ', then merge it yourself'}.</p>
       <pre>${esc(q.diff.stat)}</pre>
       <details><summary>Full diff${q.diff.truncated ? ' (truncated)' : ''}</summary><pre>${colourDiff(q.diff.patch)}</pre></details></div>`;
   }
+  html += deliveryHtml(q);
   el.innerHTML = html;
+  const b = $('[data-deliver]', el);
+  if (b) b.onclick = () => { b.disabled = true; api('POST', `/api/quests/${q.id}/deliver`).catch((e) => { b.disabled = false; toast(e.message); }); };
+}
+
+/** Where the result goes: the final commit, and a button to fast-forward the target branch to it. */
+function deliveryHtml(q) {
+  const d = q.delivery;
+  if (!d?.commit) return '';
+  const at = `<code>${esc(q.repo.branch)}</code> at <code>${esc(d.commit.slice(0, 8))}</code>`;
+  if (!d.target) return `<div class="delivery"><p>The result is ${at}.</p></div>`;
+  const t = `<code>${esc(d.target)}</code>`;
+  const body = {
+    delivered: `<p class="ok">✓ ${t} was fast-forwarded to ${at}${d.dir ? ` (checked out at <code>${esc(d.dir)}</code>)` : ''}.</p>`,
+    moved: `<p>${t} has new commits since the quest last merged it, so it can't simply fast-forward. Merge ${at} into it: <code>git merge ${esc(q.repo.branch)}</code> on ${t}.</p>`,
+    ready: `<p>The result is ${at}, ready to fast-forward ${t}.</p><button class="btn gold" data-deliver>Fast-forward ${esc(d.target)}</button>`,
+  }[d.status] ?? '';
+  return `<div class="delivery"><h3>Delivery</h3>${body}${d.error && d.status !== 'delivered' ? `<p class="error">${esc(d.error)}</p>` : ''}</div>`;
 }
 
 function colourDiff(patch) {
@@ -868,6 +888,11 @@ function openNewQuest() {
   const dlg = $('#new-quest'), form = $('#new-quest-form');
   form.cwd.value = form.cwd.value || G.settings.lastCwd || '';
   form.maxAgents.value = G.settings.maxAgents ?? 6;
+  if (!form.dataset.touched) form.checkIn.value = G.settings.checkIn ?? '';
+  form.checkIn.oninput = () => { form.dataset.touched = '1'; };
+  const editOnly = () => $('.edit-only', form).classList.toggle('hidden', form.mode.value !== 'edit');
+  for (const r of form.querySelectorAll('[name=mode]')) r.onchange = editOnly;
+  editOnly();
   $('#new-quest-error').textContent = '';
   dlg.showModal();
   form.goal.focus();
@@ -883,6 +908,8 @@ $('#new-quest-form').addEventListener('submit', async (e) => {
   try {
     const q = await api('POST', '/api/quests', {
       goal: form.goal.value, cwd: form.cwd.value.trim(), mode: form.mode.value, planning: form.planning.value, maxAgents: Number(form.maxAgents.value),
+      checkIn: form.checkIn.value,
+      ...(form.mode.value === 'edit' ? { target: form.target.value.trim() || undefined, sync: form.sync.value, deliver: form.deliverAuto.checked ? 'auto' : 'offer' } : {}),
     });
     form.goal.value = '';
     $('#new-quest').close();
@@ -900,6 +927,7 @@ function openSettings() {
   $('#theme-select').innerHTML = Object.entries(THEMES).map(([id, t]) => `<option value="${id}" ${id === (G.settings.theme ?? 'fantasy') ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
   for (const k of ['maxConcurrent', 'maxAgents', 'batchSeconds']) form[k].value = G.settings[k];
   form.animate.checked = G.settings.animate !== false;
+  form.checkIn.value = G.settings.checkIn ?? '';
   $('#roles-json').value = JSON.stringify(G.roles, null, 2);
   $('#roles-error').textContent = '';
   renderGallery(style());
@@ -933,6 +961,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
     G.settings = await api('PUT', '/api/settings', {
       style: f.style.value, theme: f.theme.value, maxConcurrent: Number(f.maxConcurrent.value), maxAgents: Number(f.maxAgents.value), batchSeconds: Number(f.batchSeconds.value),
       animate: f.animate.checked,
+      checkIn: f.checkIn.value,
     });
     applyTheme();
     rerender();

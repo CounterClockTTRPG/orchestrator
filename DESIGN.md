@@ -163,6 +163,22 @@ The downtime is kept in `pausedMs` and left out of running times.
 - **Invented roles are sanitised:** only title, describe, tools and prompt are kept. The id must be a slug, and the
   colours are generated as hex.
 
+## Delivering into work outside the quest
+
+- **Target branch** (edit mode): `target`, by default the branch checked out in `cwd`. The party starts from its
+  latest commit. When the quest is done, Guild records the final commit (`delivery`) and fast-forwards the target to it
+  on request (*Fast-forward* in the Chronicle, `POST /api/quests/:id/deliver`, MCP `deliver_quest`), or at once with
+  `deliver: 'auto'`. Only fast-forwards: if the target moved on after the last merge, Guild says so and leaves the
+  merge to you. A target checked out in a worktree is fast-forwarded there (its files follow), and never over
+  uncommitted changes.
+- **Outside work** (`sync`: the target plus any branches you name): `merge_party` also merges their latest commits
+  into the quest branch, so clashes with work done meanwhile surface as conflicts for the Archmage, who then re-runs
+  the checks. `finish_quest` refuses while any of them has commits the quest branch does not contain.
+- **Check-ins** (`checkIn`, default from Settings, `''` for none): the rule is in the Archmage's and every agent's
+  instructions. Agents ask with `ask(question, human: true)`; such a question waits for the human, and
+  `answer_agent` refuses it. The Archmage asks with `ask_human`. Agents list every design number they changed in
+  their final report.
+
 ## Task dependencies
 
 - On dispatch the whole party is recruited. Members with unfinished prerequisites are `waiting`: they hold no

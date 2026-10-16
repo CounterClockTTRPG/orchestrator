@@ -24,6 +24,11 @@ final result. The browser shows the whole council live, with a procedurally gene
   `vendor/portraitgen/`. The art style is configurable (default: painterly). Portraits move with their state: agents
   read while they work, ponder when blocked, doze while they wait, and lip-sync what they report (*Animated portraits*
   in Settings).
+- **Delivery and outside work** (edit mode): name the branch the result is for (default: the one checked out). The
+  party starts from it, merges its latest work (and any other branches you name) before finishing, so clashes with
+  work done meanwhile are resolved inside the quest, and then fast-forwards it on a click, or at once if you ask.
+- **Check-ins:** a rule (default in Settings, e.g. "ask me before changing a balance number by more than 20%") that
+  the Archmage and every agent follow: such changes wait for your answer, even with automatic planning.
 - **Task titles:** every card names what that agent works on ("Fix session expiry"), set by the Archmage and editable
   in the plan review.
 - **REST + SSE API and an MCP server,** so other projects and Claude Code sessions can start and follow quests.
@@ -74,7 +79,8 @@ claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
 ```
 
 Tools: `start_quest(goal, cwd?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
-`list_quests()`, `message_quest(id, text, agentId?)`, `resume_quest(id)` and `cancel_quest(id)`. `cwd` defaults to the session's project,
+`list_quests()`, `message_quest(id, text, agentId?)`, `resume_quest(id)`, `deliver_quest(id)` and `cancel_quest(id)`.
+`start_quest` also takes `target`, `sync`, `deliver` and `checkIn`. `cwd` defaults to the session's project,
 and MCP quests default to automatic planning. If the server isn't running, the MCP server starts it in the background.
 Set `GUILD_URL` to use a server elsewhere; a remote server is never auto-started.
 
@@ -92,7 +98,8 @@ curl -s localhost:7777/api/quests/<id>               # full state, including the
 
 | Method | Path | |
 |---|---|---|
-| POST | `/api/quests` | `{ goal, cwd, mode: "read"\|"edit", planning: "review"\|"auto", maxAgents? }` |
+| POST | `/api/quests` | `{ goal, cwd, mode: "read"\|"edit", planning: "review"\|"auto", maxAgents?, target?, sync?, deliver?: "offer"\|"auto", checkIn? }` |
+| POST | `/api/quests/:id/deliver` | fast-forward the target branch to a finished edit quest's result |
 | GET | `/api/quests`, `/api/quests/:id` | list / full state |
 | GET | `/api/quests/:id/events` | SSE: `snapshot`, then `quest`, `archmage`, `agent`, `activity`, `log`, `report`, `plan`, `roles`, `chronicle` |
 | GET | `/api/events` | SSE: `state`, then `summary` (one per quest change), `settings`, `roles` |

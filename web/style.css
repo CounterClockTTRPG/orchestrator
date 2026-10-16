@@ -244,6 +244,11 @@ main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
 .card .role { font-size: 0.85rem; color: var(--gold); display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
 .card .status { position: absolute; top: 1.2rem; left: 1.2rem; font-family: var(--title); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; background: rgba(15, 13, 22, 0.82); border: 1px solid var(--line); padding: 0.1rem 0.45rem; border-radius: 6px; }
 .card .status.working { color: var(--arcane-light); } .card .status.blocked { color: var(--warn); } .card .status.done { color: var(--ok); } .card .status.failed { color: var(--bad); }
+.delivery { margin-top: 1rem; padding-top: 0.6rem; border-top: 1px solid var(--line); }
+.delivery .ok { color: var(--gold); }
+.question.check-in .q { color: var(--gold); }
+#new-quest-form label.check { display: flex; align-items: center; gap: 0.4rem; color: var(--ink); }
+#new-quest-form label.check input { width: auto; margin: 0; }
 .card .job { font-weight: 600; color: var(--ink); margin: 0.35rem 0 0; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .job.big { font-size: 1.05rem; color: var(--gold); margin: 0.1rem 0 0.4rem; }
 .card .task { font-size: 0.9rem; color: var(--muted); margin: 0.35rem 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
