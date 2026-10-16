@@ -11,6 +11,11 @@ final result. The browser shows the whole council live, with a procedurally gene
   them into `guild/<quest>/party` and resolves conflicts. You review that branch; your checkout is never touched.
 - **Reviewed or automatic planning:** review the proposed party and its tasks in the browser (edit, add, remove) before
   dispatch, or let it go at once.
+- **Task dependencies:** the plan is a graph. A member can wait for others (`after`); it starts by itself once they
+  are done, with their final reports handed over, and in edit mode on a branch that already holds their work. The
+  council table draws these links. If a prerequisite fails, the dependent is *held* until the Archmage (or you)
+  starts it anyway, changes its task or recalls it. The queue starts the agents with the longest chain of work behind
+  them first.
 - **Live control:** message any agent, answer an agent that is blocked on a question, recall an agent, or abandon the
   quest.
 - **Role catalog with looks:** every role has its own race, outfit and colours (auditors are hooded elves, testers are
@@ -87,11 +92,12 @@ curl -s localhost:7777/api/quests/<id>               # full state, including the
 | GET | `/api/quests`, `/api/quests/:id` | list / full state |
 | GET | `/api/quests/:id/events` | SSE: `snapshot`, then `quest`, `archmage`, `agent`, `activity`, `log`, `report`, `plan`, `roles`, `chronicle` |
 | GET | `/api/events` | SSE: `state`, then `summary` (one per quest change), `settings`, `roles` |
-| POST | `/api/quests/:id/plan/approve` | `{ agents?: [{ role, task }] }`, the plan, optionally edited |
+| POST | `/api/quests/:id/plan/approve` | `{ agents?: [{ key?, role, task, after? }] }`, the plan, optionally edited |
 | POST | `/api/quests/:id/message` | `{ text }` to the Archmage |
 | POST | `/api/quests/:id/cancel` | abandon the quest |
 | POST | `/api/quests/:id/resume` | carry on with a quest a server restart *interrupted* |
 | POST | `/api/quests/:id/agents/:aid/message` · `/answer` · `/cancel` | `{ text }` |
+| POST | `/api/quests/:id/agents/:aid/start` | start a *waiting* agent now, without the rest of its prerequisites |
 | GET/PUT | `/api/roles` · POST `/api/roles/:id` | the role catalog; save an invented role with `{ quest }` |
 | GET/PUT | `/api/settings` | `style`, `maxConcurrent`, `maxAgents`, `batchSeconds` |
 
@@ -107,6 +113,7 @@ other Claude Code ─ MCP (bin/guild-mcp.js) ────┤                    
 - `server.js` and `lib/guild.js` own the quests, the agent processes, the global queue (`maxConcurrent` running agents
   across all quests) and the event log. The two MCP servers (`lib/council-mcp.js`, `lib/report-mcp.js`) are tiny
   stdio processes that forward tool calls to the server's `/internal/…` routes.
+- **Timestamps** in the Dispatch scroll show the clock time and how long ago it was ("10 minutes ago").
 - **Reports** reach the UI at once. The Archmage gets routine progress in batches (every `batchSeconds`, default 60);
   `blocked`, `done` and `failed` wake it immediately.
 - **Messages to a working agent** come back in the reply to its next `report_progress` call (agents report often).

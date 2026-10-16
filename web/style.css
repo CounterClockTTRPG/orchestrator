@@ -204,7 +204,12 @@ main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
 .thread.blocked { stroke: var(--warn); stroke-dasharray: 3 6; opacity: 0.9; }
 .thread.done { stroke: var(--gold); opacity: 0.7; }
 .thread.failed { stroke: var(--bad); opacity: 0.5; }
-.thread.cancelled, .thread.interrupted, .thread.queued { stroke: var(--queued); opacity: 0.35; stroke-dasharray: 2 6; }
+.thread.cancelled, .thread.interrupted, .thread.queued, .thread.waiting { stroke: var(--queued); opacity: 0.35; stroke-dasharray: 2 6; }
+/* Dependency links between party cards: from the work an agent waits for to the agent. */
+.dep { fill: none; stroke: var(--gold-soft); stroke-width: 1.4; stroke-dasharray: 4 5; opacity: 0.75; }
+.dep.met { stroke: var(--gold); stroke-dasharray: none; opacity: 0.6; }
+.dep.lost { stroke: var(--bad); opacity: 0.6; }
+.dep-head { fill: var(--gold-soft); }
 @keyframes flow { to { stroke-dashoffset: -28; } }
 .orb { fill: var(--orb); filter: drop-shadow(0 0 6px var(--gold)) drop-shadow(0 0 12px var(--arcane)); }
 
@@ -221,7 +226,12 @@ main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
 .card.blocked { border-color: var(--warn); box-shadow: 0 0 26px rgba(232, 163, 60, 0.3); }
 .card.done { border-color: var(--gold-soft); }
 .card.failed { border-color: #6d2f2b; }
-.card.cancelled, .card.interrupted, .card.queued { opacity: 0.72; }
+.card.cancelled, .card.interrupted, .card.queued, .card.waiting { opacity: 0.72; }
+.card .after { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+.card .after b { color: var(--gold-soft); font-weight: 600; }
+.card .after .lost { color: var(--bad); }
+.contract .after-pick { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; font-size: 0.8rem; color: var(--muted); }
+.contract .after-pick label { display: inline-flex; align-items: center; gap: 0.25rem; cursor: pointer; }
 .card.flash { box-shadow: 0 0 34px rgba(var(--gold-rgb), 0.55); }
 .card .portrait {
   width: 100%; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--bg2);

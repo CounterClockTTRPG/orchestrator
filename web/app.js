@@ -3,7 +3,7 @@
 import { setPortrait, setPortraitTheme, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
 import { theme, themedRole, THEMES, presentationOfName } from './themes.js';
-import { agentElapsed, questElapsed, duration } from './elapsed.js';
+import { agentElapsed, questElapsed, duration, ago } from './elapsed.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const ACTIVE = new Set(['planning', 'awaiting-approval', 'questing']);
@@ -32,6 +32,10 @@ async function api(method, path, body) {
 const money = (n) => (n ? `$${n.toFixed(n < 1 ? 3 : 2)}` : '');
 const time = (ts) => (ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 const when = (ts) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// A clock time with how long ago it was ("14:02:11 · 10 minutes ago"); the relative part is kept fresh below.
+const stampText = (ts) => (ts ? `${time(ts)} · ${ago(ts)}` : '');
+const stamp = (ts) => (ts ? `<time datetime="${esc(ts)}" title="${esc(new Date(ts).toLocaleString())}">${stampText(ts)}</time>` : '');
+setInterval(() => { for (const el of document.querySelectorAll('time[datetime]')) el.textContent = stampText(el.getAttribute('datetime')); }, 30_000);
 const role = (id, q = G.q) => themedRole(G.settings.theme, id, q?.roles?.[id] ?? G.roles[id] ?? { title: id, describe: 'human adventurer' });
 const archRole = () => {
   const [id, r] = Object.entries(G.roles).find(([, x]) => x.orchestrator) ?? ['archmage', { describe: 'old human wizard with a long white beard', name: 'Velothar' }];
@@ -338,7 +342,7 @@ function renderThread() {
     const li = document.createElement('li');
     li.className = `from-${e.who} kind-${e.kind}`;
     const label = e.who === 'you' ? 'You' : e.kind === 'ask' ? `${whoLabel('archmage')} asks you` : whoLabel('archmage');
-    li.innerHTML = `<div class="head"><b>${esc(label)}</b> · ${time(e.ts)}</div><div class="md"></div>`;
+    li.innerHTML = `<div class="head"><b>${esc(label)}</b> · ${stamp(e.ts)}</div><div class="md"></div>`;
     $('.md', li).innerHTML = markdown(e.text);
     if (e.attachment) $('.md', li).replaceChildren(fileChip(e.attachment, true));
     ol.append(li);
@@ -379,6 +383,7 @@ function renderParty() {
         <div class="portrait"></div><span class="status"></span>
         <div class="name"></div><div class="role"></div>
         <div class="task"></div>
+        <div class="after hidden"></div>
         <div class="question hidden"><div class="q"></div><textarea placeholder="Your answer…"></textarea><button class="btn small gold">Answer</button></div>
         <div class="report"></div>
         <div class="activity"></div>
@@ -410,7 +415,20 @@ function renderParty() {
 }
 
 // Working cards first, then waiting ones, then the finished: the flex order keeps recruitment order within each group.
-const CARD_ORDER = { working: 0, blocked: 0, queued: 1 };
+const CARD_ORDER = { working: 0, blocked: 0, queued: 1, waiting: 1 };
+
+const LOST = new Set(['failed', 'cancelled', 'interrupted']);
+
+/** "Waits for Hilda, Borin" (or "Built on …" once it set out), each name marked by how that work went. */
+function afterLine(a) {
+  if (!a.after?.length) return '';
+  const names = a.after.map((id) => {
+    const d = G.q.agents.find((x) => x.id === id);
+    if (!d) return esc(id);
+    return `<b class="${LOST.has(d.status) ? 'lost' : ''}" title="${esc(agentWord(d.status))}">${esc(d.name)}${d.status === 'done' ? ' ✓' : ''}</b>`;
+  });
+  return `${a.status === 'waiting' ? (a.held ? 'Held, waits for' : 'Waits for') : 'Built on'} ${names.join(', ')}`;
+}
 
 function updateCard(el, a) {
   const r = role(a.role);
@@ -424,6 +442,9 @@ function updateCard(el, a) {
   $('.role', el).innerHTML = `<span>${esc(r.title ?? a.title)}</span>${invented ? '<span class="badge new">new role</span>' : ''}`;
   $('.task', el).textContent = a.task;
   $('.task', el).title = a.task;
+  const after = afterLine(a);
+  $('.after', el).innerHTML = after;
+  $('.after', el).classList.toggle('hidden', !after);
   const qb = $('.question', el);
   qb.classList.toggle('hidden', a.status !== 'blocked' || !a.question);
   $('.q', qb).textContent = a.question ? `“${a.question}”` : '';
@@ -483,6 +504,31 @@ function drawThreads() {
     p.setAttribute('class', `thread ${a.status}`);
     seen.add(a.id);
   }
+  // Dependency links: an arc over the party row from the work waited for to the agent waiting, with an arrowhead.
+  for (const a of G.q.agents) {
+    const card = G.cards.get(a.id);
+    for (const depId of a.after ?? []) {
+      const depCard = G.cards.get(depId), dep = G.q.agents.find((x) => x.id === depId);
+      if (!card || !depCard || !dep) continue;
+      const s = centerOf(depCard, box), t = centerOf(card, box);
+      const lift = Math.min(70, 24 + Math.abs(t.x - s.x) * 0.12);
+      const d = `M ${s.x} ${s.top} C ${s.x} ${s.top - lift}, ${t.x} ${t.top - lift}, ${t.x} ${t.top - 6}`;
+      const id = `dep:${depId}>${a.id}`;
+      let p = G.threads.get(id);
+      if (!p) {
+        p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.setAttribute('marker-end', 'url(#dep-arrow)');
+        svg.append(p);
+        G.threads.set(id, p);
+      }
+      p.setAttribute('d', d);
+      p.setAttribute('class', `dep ${dep.status === 'done' ? 'met' : LOST.has(dep.status) ? 'lost' : ''}`);
+      seen.add(id);
+    }
+  }
+  if (!$('#dep-arrow', svg) && [...seen].some((id) => id.startsWith('dep:'))) {
+    svg.insertAdjacentHTML('afterbegin', '<defs><marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="dep-head" d="M0 0 L10 5 L0 10 z"/></marker></defs>');
+  }
   for (const [id, p] of G.threads) if (!seen.has(id)) { p.remove(); G.threads.delete(id); }
 }
 
@@ -520,7 +566,9 @@ function renderPlan() {
   if (!q || !slot) return;
   if (q.status !== 'awaiting-approval' || !q.plan) { slot.innerHTML = ''; G.planKey = null; renderParty(); return; }
   const key = q.plan.proposedAt;
-  if (G.planKey !== key) { G.planKey = key; G.planDraft = q.plan.agents.map((m) => ({ ...m })); }
+  if (G.planKey !== key) { G.planKey = key; G.planDraft = q.plan.agents.map((m, i) => ({ ...m, key: m.key ?? `t${i + 1}`, after: [...(m.after ?? [])] })); }
+  const draft = G.planDraft;
+  const freeKey = () => { let n = draft.length + 1; while (draft.some((m) => m.key === `t${n}`)) n++; return `t${n}`; };
   const roleIds = [...Object.keys(G.roles).filter((id) => !G.roles[id].orchestrator), ...Object.keys(q.roles ?? {}).filter((id) => !G.roles[id])];
   slot.innerHTML = `
     <div class="plan">
@@ -538,21 +586,30 @@ function renderPlan() {
     el.className = 'card contract';
     el.innerHTML = `
       <div class="portrait"></div>
-      <label>Role <select>${roleIds.map((id) => `<option value="${esc(id)}" ${id === m.role ? 'selected' : ''}>${esc(role(id).title ?? id)}${G.roles[id] ? '' : ' (new)'}</option>`).join('')}</select></label>
+      <label>#${i + 1} · Role <select>${roleIds.map((id) => `<option value="${esc(id)}" ${id === m.role ? 'selected' : ''}>${esc(role(id).title ?? id)}${G.roles[id] ? '' : ' (new)'}</option>`).join('')}</select></label>
       <label>Task <textarea>${esc(m.task)}</textarea></label>
+      ${draft.length > 1 ? `<div class="after-pick" title="This member starts once the ticked ones are done, with their reports"><span>After</span>${draft.map((o, j) => (j === i ? '' : `<label><input type="checkbox" value="${esc(o.key)}" ${m.after.includes(o.key) ? 'checked' : ''}>#${j + 1} ${esc(role(o.role).title ?? o.role)}</label>`)).join('')}</div>` : ''}
       <div class="foot"><span class="muted small">${esc(role(m.role).blurb ?? role(m.role).prompt?.slice(0, 80) ?? '')}</span><button class="icon-btn" title="Remove">✕</button></div>`;
     const paint = () => setPortrait($('.portrait', el), { seed: `${q.id}-${i}`, role: role(m.role), status: 'queued', style: style(), size: 200 });
     paint();
     $('select', el).onchange = (e) => { m.role = e.target.value; paint(); };
     $('textarea', el).oninput = (e) => { m.task = e.target.value; };
-    $('.icon-btn', el).onclick = () => { G.planDraft.splice(i, 1); G.planKey = key; renderPlan(); };
+    for (const cb of el.querySelectorAll('.after-pick input')) {
+      cb.onchange = () => { m.after = cb.checked ? [...m.after, cb.value] : m.after.filter((k) => k !== cb.value); };
+    }
+    $('.foot .icon-btn', el).onclick = () => {
+      draft.splice(i, 1);
+      for (const o of draft) o.after = o.after.filter((k) => k !== m.key);
+      G.planKey = key;
+      renderPlan();
+    };
     box.append(el);
   });
   if (G.planDraft.length < q.maxAgents) {
     const add = document.createElement('div');
     add.className = 'card contract add';
     add.textContent = W().addMember;
-    add.onclick = () => { G.planDraft.push({ role: roleIds[0], task: '' }); renderPlan(); };
+    add.onclick = () => { draft.push({ key: freeKey(), role: roleIds[0], task: '', after: [] }); renderPlan(); };
     box.append(add);
   }
   $('[data-dispatch]', slot).onclick = async (e) => {
@@ -594,7 +651,7 @@ function renderLog() {
     li.className = `kind-${e.kind}`;
     const to = e.to ? ` → ${esc(e.to === 'archmage' ? whoLabel('archmage') : whoLabel(e.to))}` : '';
     const label = { attach: 'shares a file', ask: 'asks', report: `${e.percent ?? ''}%${e.phase ? ` · ${esc(e.phase)}` : ''}`, question: 'asks', answer: 'answers', done: W().verbs.done, failed: W().verbs.failed, say: 'says', action: '', message: 'says', system: '' }[e.kind] ?? '';
-    li.innerHTML = `<div class="who"></div><div><div class="head"><b>${esc(whoLabel(e.who))}</b>${to} ${label} · ${time(e.ts)}</div><div class="text"></div></div>`;
+    li.innerHTML = `<div class="who"></div><div><div class="head"><b>${esc(whoLabel(e.who))}</b>${to} ${label} · ${stamp(e.ts)}</div><div class="text"></div></div>`;
     $('.text', li).innerHTML = markdown(e.text);
     if (e.attachment) $('.text', li).replaceChildren(fileChip(e.attachment, true));
     const w = $('.who', li);
@@ -675,15 +732,17 @@ function openAgent(id) {
         <h2>${esc(a.name)}</h2>
         <div class="role" style="color:var(--gold)">${esc(r.title ?? a.title)} · ${agentWord(a.status)} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}${agentElapsed(a) != null ? ` · ${duration(agentElapsed(a))}` : ''}</div>
         <div class="section"><h4>Task</h4><div class="md">${markdown(a.task)}</div></div>
+        ${a.after?.length ? `<div class="section after"><h4>Depends on</h4>${afterLine(a)}</div>` : ''}
         ${a.question ? `<div class="section question"><h4>Asks</h4>${esc(a.question)}</div>` : ''}
         ${a.branch ? `<div class="section"><h4>Branch</h4><code>${esc(a.branch)}</code> · ${a.commits ?? 0} commit(s)</div>` : ''}
         ${a.result ? `<div class="section"><h4>Final report</h4><div class="md">${markdown(a.result)}</div></div>` : ''}
         ${filesOf(a.id).length ? `<div class="section"><h4>Files</h4><div class="files big"></div></div>` : ''}
-        <div class="section"><h4>Dispatches</h4><div class="reports">${reports.map((e) => `<div><span class="muted small">${time(e.ts)} ${esc(whoLabel(e.who))}${e.to ? ` → ${esc(whoLabel(e.to))}` : ''}${e.percent !== undefined ? ` · ${e.percent}%` : ''}</span><div class="md">${markdown(e.text)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}</div></div>
+        <div class="section"><h4>Dispatches</h4><div class="reports">${reports.map((e) => `<div><span class="muted small">${stamp(e.ts)} · ${esc(whoLabel(e.who))}${e.to ? ` → ${esc(whoLabel(e.to))}` : ''}${e.percent !== undefined ? ` · ${e.percent}%` : ''}</span><div class="md">${markdown(e.text)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}</div></div>
         <div class="detail-actions">
           ${ACTIVE.has(q.status) && !['cancelled', 'interrupted'].includes(a.status) ? '<button class="btn" data-d="message">Send a message</button>' : ''}
           ${a.status === 'blocked' ? '<button class="btn gold" data-d="answer">Answer</button>' : ''}
-          ${ACTIVE.has(q.status) && ['queued', 'working', 'blocked'].includes(a.status) ? `<button class="btn danger" data-d="recall">${esc(W().recall)}</button>` : ''}
+          ${ACTIVE.has(q.status) && a.status === 'waiting' ? '<button class="btn gold" data-d="start" title="Start without waiting for the rest of its prerequisites">Start now</button>' : ''}
+          ${ACTIVE.has(q.status) && ['queued', 'waiting', 'working', 'blocked'].includes(a.status) ? `<button class="btn danger" data-d="recall">${esc(W().recall)}</button>` : ''}
           ${invented ? '<button class="btn" data-d="save-role">Save this role to the catalog</button>' : ''}
         </div>
       </div>
@@ -700,6 +759,7 @@ function openAgent(id) {
     if (text) answerAgent(a.id, text);
   });
   on('recall', () => { $('#agent-detail').close(); recallAgent(a.id); });
+  on('start', () => { $('#agent-detail').close(); api('POST', `/api/quests/${q.id}/agents/${a.id}/start`).catch((e) => toast(e.message)); });
   on('save-role', () => api('POST', `/api/roles/${a.role}`, { quest: q.id }).then(() => { toast(`${r.title ?? a.title} is now in the catalog.`); $('#agent-detail').close(); renderParty(); }).catch((e) => toast(e.message)));
   $('#agent-detail').showModal();
 }
@@ -740,7 +800,7 @@ function renderFiles(box, who) {
 async function openFile(f) {
   const dlg = $('#file-viewer'), body = $('#file-body');
   $('#file-title').textContent = f.caption ?? f.name;
-  $('#file-meta').innerHTML = `${esc(whoLabel(f.who))} · ${esc(f.name)} · ${fileSize(f.size)} · ${time(f.ts)} ·
+  $('#file-meta').innerHTML = `${esc(whoLabel(f.who))} · ${esc(f.name)} · ${fileSize(f.size)} · ${stamp(f.ts)} ·
     <a href="${fileUrl(f)}" target="_blank" rel="noopener">Open in a new tab</a> · <a href="${fileUrl(f, true)}">Download</a>`;
   const type = f.type.split(';')[0];
   body.innerHTML = '';

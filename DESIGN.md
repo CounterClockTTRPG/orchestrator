@@ -13,7 +13,7 @@ council live, with portraitgen portraits.
 | Planning | Per quest toggle: **review** (Archmage proposes the party and tasks, you edit and approve in the browser) or **auto** (dispatch at once). |
 | Orchestrator | A **live** Claude session that receives reports, steers (messages, recruits, cancels) and finally synthesizes. |
 | Wake-ups | Routine progress reports are batched and delivered about every 60 s. `blocked`, `done` and `failed` wake the Archmage at once. |
-| Party shape | **Flat**: only the Archmage recruits. Subagents have the built-in Task/Agent tool disabled. |
+| Party shape | **Flat**: only the Archmage recruits. Subagents have the built-in Task/Agent tool disabled. The plan is a **dependency graph**: a member may wait for others (`after`) and starts by itself when they are done. |
 | Edit output | Agents commit on `guild/<quest>/<agent>`. The Archmage merges them into `guild/<quest>/party` and resolves conflicts. The quest then **stops for your review**; nothing touches your main branch. |
 | Non-git dir | Edit mode is refused. Read-only works anywhere. |
 | Browser controls | Cancel an agent or the quest, message a running agent, answer a blocked agent (your answer wins over the Archmage's). |
@@ -42,8 +42,9 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
 - **Archmage**: one long-lived stream-json session per quest. Its MCP tools (served by `lib/council-mcp.js`, which
   forwards them to server.js over HTTP):
   - `propose_plan(agents[])` stores the plan. In review mode the quest waits for your approval and edits; in auto
-    mode it dispatches at once.
-  - `recruit_agent(role, task, name?)`, `message_agent(id, text)`, `cancel_agent(id)`, `list_party()`
+    mode it dispatches at once. Each member is `{ key?, role, task, after? }`, where `after` lists the keys of the
+    members whose results it needs. Duplicate keys, unknown keys and cycles are refused with the reason.
+  - `recruit_agent(role, task, after?)` (`after`: agent ids), `start_agent(id)` (start a waiting agent now), `message_agent(id, text)`, `cancel_agent(id)`, `list_party()`
   - `answer_agent(id, text)` replies to a blocked agent.
   - `merge_party()` (edit mode) merges the agent branches into `guild/<quest>/party` in an integration worktree and
     returns the conflicts. The Archmage resolves them with Bash/Edit in that worktree.
@@ -100,7 +101,8 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
 | GET | `/api/quests` / `/api/quests/:id` | list / full state |
 | GET | `/api/quests/:id/events` | SSE: `snapshot`, then `agent`, `report`, `activity`, `plan`, `chronicle`, `quest` events. Stored events carry an id (`seq`); `?since=<seq>` or `Last-Event-ID` replays the ones after it instead of the snapshot |
 | GET | `/api/events` | SSE for all quests (the list view) |
-| POST | `/api/quests/:id/plan/approve` | `{ agents[] }` (edited plan) dispatches |
+| POST | `/api/quests/:id/plan/approve` | `{ agents[] }` (edited plan, with `key` and `after`) dispatches |
+| POST | `/api/quests/:id/agents/:aid/start` | start a waiting agent now |
 | POST | `/api/quests/:id/cancel` · `/agents/:aid/cancel` | cancel |
 | POST | `/api/quests/:id/resume` | resume an *interrupted* quest |
 | POST | `/api/quests/:id/agents/:aid/message` · `/answer` | `{ text }` |
@@ -151,6 +153,22 @@ The downtime is kept in `pausedMs` and left out of running times.
   allowed tools.
 - **Invented roles are sanitised:** only title, describe, tools and prompt are kept. The id must be a slug, and the
   colours are generated as hex.
+
+## Task dependencies
+
+- On dispatch the whole party is recruited. Members with unfinished prerequisites are `waiting`: they hold no
+  concurrency slot and are not queued.
+- When an agent finishes `done`, every waiting agent whose prerequisites are all done is scheduled. No Archmage turn
+  is needed; it is told `[started]` in its next batch.
+- **Handoff:** a dependent's first message carries each prerequisite's final report and the names of their attached
+  files.
+- **Edit mode:** a dependent's branch starts from its first prerequisite's branch, and the others are merged in. Merge
+  conflicts become the agent's first step. Its `commits` count only its own work (from `startRef`).
+- **A failed or recalled prerequisite** holds its dependents, and the Archmage is woken (`[held]`) to `start_agent`,
+  `message_agent` or `cancel_agent`. If nobody is working and agents still wait, the Archmage is reminded three
+  times, then the waiting agents are recalled.
+- **Queue order:** agents whose chain of dependents is longest start first; equal ones in arrival order.
+- **Interruptions:** waiting agents stay waiting when the server stops, and are re-checked on resume.
 
 ## Out of scope for v1
 

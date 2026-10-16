@@ -92,6 +92,7 @@ const API = {
     ['POST', '/api/quests/:id/agents/:aid/answer', '{ text }: answer an agent blocked on a question'],
     ['GET', '/api/quests/:id/files/:fid', 'a file an agent or the Archmage attached (screenshot, report); ?download=1 saves it'],
     ['POST', '/api/quests/:id/agents/:aid/cancel', 'recall one agent'],
+    ['POST', '/api/quests/:id/agents/:aid/start', 'start an agent that waits for others (status "waiting") now'],
     ['GET', '/api/roles', 'the role catalog'],
     ['PUT', '/api/roles', 'replace the role catalog'],
     ['POST', '/api/roles/:rid', '{ role } or { quest }: save a role (e.g. one the Archmage invented)'],
@@ -144,6 +145,7 @@ const routes = [
   ['POST', '/api/quests/:id/resume', async ({ id }) => questOf(id).resume()],
   ['POST', '/api/quests/:id/message', async ({ id }, req) => { questOf(id).messageArchmage(need((await body(req)).text)); return { ok: true }; }],
   ['POST', '/api/quests/:id/agents/:aid/cancel', ({ id, aid }) => ({ text: questOf(id).cancelAgent(aid, 'you') })],
+  ['POST', '/api/quests/:id/agents/:aid/start', ({ id, aid }) => ({ text: questOf(id).startNow(aid, 'you') })],
   ['POST', '/api/quests/:id/agents/:aid/message', async ({ id, aid }, req) => ({ text: questOf(id).messageAgent(aid, need((await body(req)).text), 'you') })],
   ['POST', '/api/quests/:id/agents/:aid/answer', async ({ id, aid }, req) => ({ text: questOf(id).answerAgent(aid, need((await body(req)).text), 'you') })],
   ['GET', '/api/quests/:id/files/:fid', ({ id, fid }, req, res, url) => {
