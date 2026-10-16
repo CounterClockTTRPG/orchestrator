@@ -21,7 +21,11 @@ final result. The browser shows the whole council live, with a procedurally gene
 - **Role catalog with looks:** every role has its own race, outfit and colours (auditors are hooded elves, testers are
   orcs, smiths are dwarves…). Each agent has its own face and name. The Archmage may invent new roles; you can save
   them to the catalog. Portraits come from [portraitgen](https://github.com/CounterClockTTRPG/portraitgen), vendored in
-  `vendor/portraitgen/`. The art style is configurable (default: painterly).
+  `vendor/portraitgen/`. The art style is configurable (default: painterly). Portraits move with their state: agents
+  read while they work, ponder when blocked, doze while they wait, and lip-sync what they report (*Animated portraits*
+  in Settings).
+- **Task titles:** every card names what that agent works on ("Fix session expiry"), set by the Archmage and editable
+  in the plan review.
 - **REST + SSE API and an MCP server,** so other projects and Claude Code sessions can start and follow quests.
 
 ## Running it

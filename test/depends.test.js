@@ -131,7 +131,7 @@ test('editing a reviewed plan keeps the graph and drops links to removed members
   q.proposePlan({ summary: 's', agents: [{ key: 'a', role: 'auditor', task: 'A' }, { key: 'b', role: 'tester', task: 'B', after: ['a'] }] });
   q.tell = () => {};
   q.approvePlan([{ key: 'b', role: 'tester', task: 'B', after: ['a'] }]);
-  assert.deepEqual(q.s.plan.agents, [{ key: 'b', role: 'tester', task: 'B', after: [] }]);
+  assert.deepEqual(q.s.plan.agents, [{ key: 'b', role: 'tester', title: 'B', task: 'B', after: [] }]);
   assert.equal(q.s.agents[0].status, 'queued');
 });
 

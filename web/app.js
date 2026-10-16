@@ -4,6 +4,7 @@ import { setPortrait, setPortraitTheme, setPortraitMotion, motionFor, STYLES } f
 import { markdown, esc } from './markdown.js';
 import { theme, themedRole, THEMES, presentationOfName } from './themes.js';
 import { agentElapsed, questElapsed, duration, ago } from './elapsed.js';
+import { agentTitle, memberTitle, sameAsTitle } from './titles.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const ACTIVE = new Set(['planning', 'awaiting-approval', 'questing']);
@@ -168,7 +169,7 @@ function renderHall() {
     for (const a of q.party.slice(0, 10)) {
       const d = document.createElement('div');
       d.className = 'mini';
-      d.title = `${a.name} (${a.status})`;
+      d.title = `${a.name}: ${agentTitle(a)} (${a.status})`;
       el.append(d);
       setPortrait(d, { seed: a.name, role: role(a.role, null), status: a.status, style: 'illustrated', size: 64, presentation: pres(a, q) });
     }
@@ -408,6 +409,7 @@ function renderParty() {
       el.innerHTML = `
         <div class="portrait"></div><span class="status"></span>
         <div class="name"></div><div class="role"></div>
+        <div class="job"></div>
         <div class="task"></div>
         <div class="after hidden"></div>
         <div class="question hidden"><div class="q"></div><textarea placeholder="Your answer…"></textarea><button class="btn small gold">Answer</button></div>
@@ -423,6 +425,7 @@ function renderParty() {
       el.dataset.id = a.id;
       $('.portrait', el).onclick = () => openAgent(a.id);
       $('.task', el).onclick = () => openAgent(a.id);
+      $('.job', el).onclick = () => openAgent(a.id);
       $('.report', el).onclick = () => openAgent(a.id);
       $('[data-act=details]', el).onclick = () => openAgent(a.id);
       $('.name', el).onclick = () => openAgent(a.id);
@@ -466,7 +469,10 @@ function updateCard(el, a) {
   $('.name', el).textContent = a.name;
   const invented = G.q.roles?.[a.role] && !G.roles[a.role];
   $('.role', el).innerHTML = `<span>${esc(r.title ?? a.title)}</span>${invented ? '<span class="badge new">new role</span>' : ''}`;
+  $('.job', el).textContent = agentTitle(a);
+  $('.job', el).title = agentTitle(a);
   $('.task', el).textContent = a.task;
+  $('.task', el).classList.toggle('hidden', sameAsTitle(a.task, agentTitle(a)));
   $('.task', el).title = a.task;
   const after = afterLine(a);
   $('.after', el).innerHTML = after;
@@ -613,13 +619,15 @@ function renderPlan() {
     el.innerHTML = `
       <div class="portrait"></div>
       <label>#${i + 1} · Role <select>${roleIds.map((id) => `<option value="${esc(id)}" ${id === m.role ? 'selected' : ''}>${esc(role(id).title ?? id)}${G.roles[id] ? '' : ' (new)'}</option>`).join('')}</select></label>
+      <label>Title <input class="title-in" maxlength="48" value="${esc(m.title ?? '')}" placeholder="${esc(memberTitle({ task: m.task }))}"></label>
       <label>Task <textarea>${esc(m.task)}</textarea></label>
       ${draft.length > 1 ? `<div class="after-pick" title="This member starts once the ticked ones are done, with their reports"><span>After</span>${draft.map((o, j) => (j === i ? '' : `<label><input type="checkbox" value="${esc(o.key)}" ${m.after.includes(o.key) ? 'checked' : ''}>#${j + 1} ${esc(role(o.role).title ?? o.role)}</label>`)).join('')}</div>` : ''}
       <div class="foot"><span class="muted small">${esc(role(m.role).blurb ?? role(m.role).prompt?.slice(0, 80) ?? '')}</span><button class="icon-btn" title="Remove">✕</button></div>`;
     const paint = () => setPortrait($('.portrait', el), { seed: `${q.id}-${i}`, role: role(m.role), status: 'queued', style: style(), size: 200 });
     paint();
     $('select', el).onchange = (e) => { m.role = e.target.value; paint(); };
-    $('textarea', el).oninput = (e) => { m.task = e.target.value; };
+    $('textarea', el).oninput = (e) => { m.task = e.target.value; $('.title-in', el).placeholder = memberTitle({ task: m.task }); };
+    $('.title-in', el).oninput = (e) => { m.title = e.target.value; };
     for (const cb of el.querySelectorAll('.after-pick input')) {
       cb.onchange = () => { m.after = cb.checked ? [...m.after, cb.value] : m.after.filter((k) => k !== cb.value); };
     }
@@ -635,7 +643,7 @@ function renderPlan() {
     const add = document.createElement('div');
     add.className = 'card contract add';
     add.textContent = W().addMember;
-    add.onclick = () => { draft.push({ key: freeKey(), role: roleIds[0], task: '', after: [] }); renderPlan(); };
+    add.onclick = () => { draft.push({ key: freeKey(), role: roleIds[0], title: '', task: '', after: [] }); renderPlan(); };
     box.append(add);
   }
   $('[data-dispatch]', slot).onclick = async (e) => {
@@ -756,6 +764,7 @@ function openAgent(id) {
         <p class="muted small">${esc(r.describe ?? '')}${r.model ? ` · ${esc(r.model)}` : ''} · tools: ${esc(Array.isArray(r.tools) ? r.tools.join(', ') : r.tools ?? 'read')}</p></div>
       <div>
         <h2>${esc(a.name)}</h2>
+        <p class="job big">${esc(agentTitle(a))}</p>
         <div class="role" style="color:var(--gold)">${esc(r.title ?? a.title)} · ${agentWord(a.status)} · ${a.percent ?? 0}% ${money(a.costUsd) ? `· ${money(a.costUsd)}` : ''}${agentElapsed(a) != null ? ` · ${duration(agentElapsed(a))}` : ''}</div>
         <div class="section"><h4>Task</h4><div class="md">${markdown(a.task)}</div></div>
         ${a.after?.length ? `<div class="section after"><h4>Depends on</h4>${afterLine(a)}</div>` : ''}

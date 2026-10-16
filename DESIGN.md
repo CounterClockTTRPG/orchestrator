@@ -91,6 +91,15 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
   the race, outfit and colours come from the role and the face from the name. Names come from per-race syllable tables.
 - Expression follows state (only brows and mouth change, so the face stays recognisable): queued *neutral*,
   working *stern*, blocked *surprised*, done *smile*, failed *sad*, cancelled *tired*.
+- **Motion** (portraitgen emotes, on the large portraits; `web/motion.js`): working agents read down the page (Guild's
+  own `work` emote), blocked agents and a thinking Archmage ponder (`thinking`), agents waiting for others,
+  interrupted ones and a resting Archmage sleep (`sleep`, snoring), the rest blink and breathe. When the Archmage
+  says something or an agent reports, its portrait lip-syncs the line (`talk` with `say`) for a few seconds. Each
+  animated variant gets its own SVG id prefix, since the animation CSS is page-wide. Settings: *Animated portraits*;
+  viewers who prefer reduced motion see still portraits.
+- **Task titles:** each plan member has a `title` (two to six words, required in `propose_plan`, optional in
+  `recruit_agent`), stored on the agent as `taskTitle` and shown in bold on its card, in its details, in the quest
+  summary and in `list_party`. Without one, the first sentence of the task is used (`web/titles.js`).
 - Invented role: the archetype and palette are hashed from the role name, so the same name always looks the same.
 
 ## REST + SSE (port 7777)
