@@ -6,6 +6,8 @@ import { softenOutlines, volumeFilter, depthOfField, clothFolds, maskCopy } from
 import { lightingGrade } from './lighting.js';
 import { ageValue, agedHair, ageModelling } from './age.js';
 import { expressionModelling } from './expression.js';
+import { emoteTracks, createAnimator, sidePose } from './emote.js';
+import { blushMarkup, tearsMarkup, zzzMarkup } from './emoteParts.js';
 import { saturate } from './color.js';
 import { bodyPath } from './parts/clothing.js';
 import { BUILDS, buildShape, buildModelling } from './build.js';
@@ -28,9 +30,11 @@ const GENERIC_VOLUME = {
 
 /**
  * Render a traits object (from generate()) to an SVG string.
- * options: { size = 512, idPrefix, background = true, transparent = false, style }
+ * options: { size = 512, idPrefix, background = true, transparent = false, style, emotes, blink }
  * `transparent` (or the 'transparent' backdrop) leaves everything around the figure transparent.
  * `style` overrides traits.style ('illustrated' when absent).
+ * `emotes` (a list of emote ids, e.g. ['blink', 'talk']) animates the face (see emote.js).
+ * `blink` (true, or { every: seconds, delay: seconds, double }) is short for the 'blink' emote.
  */
 export function render(traits, options = {}) {
   const size = options.size ?? SIZE;
@@ -68,7 +72,7 @@ export function render(traits, options = {}) {
     return marksFilter;
   };
   // `generic`: markup drawn by a part that has no renderer for the active style.
-  const add = (out, generic = false) => {
+  const add = (out, generic = false, target = layers) => {
     if (!out) return;
     for (const [layer, raw] of Object.entries(out)) {
       if (!raw) continue;
@@ -76,22 +80,69 @@ export function render(traits, options = {}) {
       if (def.prepare && layer !== 'defs') markup = def.prepare(markup, layer);
       if (generic && def.prepareGeneric && layer !== 'defs') markup = def.prepareGeneric(markup, layer);
       if (layer === 'defs') defs += markup;
-      else if (!(layer in layers)) throw new Error(`Part rendered into unknown layer "${layer}"`);
-      else if (generic && realistic && GENERIC_VOLUME[layer]) layers[layer] += `<g filter="url(#${volume(layer)})">${markup}</g>`;
+      else if (!(layer in target)) throw new Error(`Part rendered into unknown layer "${layer}"`);
+      else if (generic && realistic && GENERIC_VOLUME[layer]) target[layer] += `<g filter="url(#${volume(layer)})">${markup}</g>`;
       // Painted-on skin marks (scars, tattoos, freckles) lose their crisp vector edge.
-      else if (generic && realistic && layer === 'marks') layers[layer] += `<g filter="url(#${softMarks()})" opacity="0.85">${markup}</g>`;
-      else layers[layer] += markup;
+      else if (generic && realistic && layer === 'marks') target[layer] += `<g filter="url(#${softMarks()})" opacity="0.85">${markup}</g>`;
+      else target[layer] += markup;
     }
   };
-  const draw = (part) => {
+  const draw = (part, target) => {
     const styled = part.styles?.[style] ?? part.styles?.[base];
-    add((styled ?? part.render)(ctx), !styled);
+    add((styled ?? part.render)(ctx), !styled, target);
   };
 
+  // Emotes: animated features are drawn once per pose and switched by CSS (see emote.js).
+  const emotes = [...(options.blink ? ['blink'] : []), ...(options.emotes ?? []).filter((id) => id !== 'blink' || !options.blink)];
+  const motion = emotes.length ? emoteTracks(traits, emotes, { blink: options.blink, say: options.say }) : {};
+  const animator = emotes.length ? createAnimator(ctx.uid) : null;
+  // Masks for one half of the face (as the viewer sees it), for poses that differ per side.
+  // Masks rather than clip paths: resvg can panic on clipped groups containing blur filters.
+  const halfMasks = {};
+  const half = (side, markup) => {
+    if (!halfMasks[side]) {
+      const { cx } = ctx.g;
+      halfMasks[side] = ctx.uid('half');
+      defs += `<mask id="${halfMasks[side]}" maskUnits="userSpaceOnUse" x="0" y="0" width="${SIZE}" height="${SIZE}"><rect x="${side === 'left' ? 0 : cx}" y="0" width="${side === 'left' ? cx : SIZE - cx}" height="${SIZE}" fill="#fff"/></mask>`;
+    }
+    return `<g mask="url(#${halfMasks[side]})">${markup}</g>`;
+  };
+  const sided = (p) => p && (p.left || p.right);
+  const posedEyes = (part, p) => (sided(p)
+    ? ['left', 'right'].map((s) => half(s, redraw(part, { eyes: sidePose(p, s) }).eyes)).join('')
+    : redraw(part, { eyes: p }).eyes);
+  // A part drawn again, in a pose, into layers of its own. It replays the random draws the
+  // portrait's drawing of it makes (same lashes, same lip texture); the portrait's stream is untouched.
+  const redraw = (part, pose) => {
+    const rng = ctx.rng;
+    const target = Object.fromEntries(LAYERS.map((l) => [l, '']));
+    Object.assign(ctx, { rng: rng.snapshot(), pose });
+    draw(part, target);
+    Object.assign(ctx, { rng, pose: undefined });
+    return target;
+  };
+  const posedMouth = (part, pose) => {
+    // Racial mouths (tusks, fangs) keep their shape and only open and close.
+    const shape = pose.part && !KEEP_MOUTH.has(traits.mouth) ? getPart('mouth', pose.part) ?? part : part;
+    const m = redraw(shape, { mouth: pose }).mouth;
+    const sx = pose.sx ?? 1, sy = pose.sy ?? 1;
+    if (sx === 1 && sy === 1) return m;
+    const { cx, mouthY } = ctx.g;
+    return `<g transform="translate(${pt(cx, mouthY)}) scale(${+sx.toFixed(3)},${+sy.toFixed(3)}) translate(${pt(-cx, -mouthY)})">${m}</g>`;
+  };
   for (const cat of CATEGORIES) {
     if (cat === 'background' && (options.background === false || options.transparent)) continue;
     const part = getPart(cat, traits[cat]);
-    if (part) draw(part);
+    if (!part) continue;
+    const track = (cat === 'eyes' || cat === 'mouth') && motion[cat];
+    if (!track) {
+      draw(part);
+      continue;
+    }
+    const frames = track.poses.slice(1).map((p) => (cat === 'eyes' ? posedEyes(part, p) : posedMouth(part, p)));
+    const before = layers[cat];
+    draw(part);
+    layers[cat] = before + animator.swap(track, [layers[cat].slice(before.length), ...frames]);
   }
   for (const id of traits.accessories ?? []) {
     const part = getPart('accessories', id);
@@ -132,6 +183,20 @@ export function render(traits, options = {}) {
   // Age and expression: lines, folds and modelling on the face and neck.
   const am = ageModelling(ctx, ctx.g.age, realistic);
   const em = expressionModelling(ctx, traits.expression, realistic);
+  if (motion.marks) {
+    // Emotes show the face lines of another expression (smile crinkles, a furrowed brow).
+    const posed = motion.marks.poses.slice(1).map((p) => expressionModelling(ctx, p, realistic));
+    defs += posed.map((m) => m.defs).join('');
+    em.marks = animator.swap(motion.marks, [em.marks, ...posed.map((m) => m.marks)]);
+  }
+  // Emote extras, faded in and out by their tracks: a blush, tears, snoring z's.
+  if (motion.blush) {
+    const b = blushMarkup(ctx);
+    defs += b.defs;
+    em.marks += animator.fade(motion.blush, b.markup);
+  }
+  if (motion.tears) em.marks += animator.fade(motion.tears, tearsMarkup(ctx, animator));
+  if (motion.zzz) layers.accHead += animator.fade(motion.zzz, zzzMarkup(ctx, animator));
   defs += am.defs + em.defs;
   layers.marks += am.marks + em.marks;
   layers.shade += am.shade;
@@ -158,6 +223,19 @@ export function render(traits, options = {}) {
     const lit = lightingGrade(ctx);
     defs += lit.defs;
     finish = lit.markup;
+  }
+  if (motion.brows && layers.brows) {
+    // Emotes raise and tilt each brow about its middle, whatever its shape. Each side is
+    // masked to its half of the face (a mask: resvg can panic on clipped blur filters).
+    const { cx, eyeDX, browY } = ctx.g;
+    const posed = (p) => ['left', 'right'].map((s) => {
+      const side = s === 'left' ? -1 : 1;
+      const q = sidePose(p, s);
+      // Positive tilt drops the inner ends (towards the nose): anger.
+      const rot = -side * (q.tilt ?? 0);
+      return half(s, `<g transform="translate(0,${+(q.dy ?? 0).toFixed(2)}) rotate(${+rot.toFixed(2)},${pt(cx + side * (eyeDX - 2), browY)})">${layers.brows}</g>`);
+    }).join('');
+    layers.brows = animator.swap(motion.brows, [layers.brows, ...motion.brows.poses.slice(1).map(posed)]);
   }
 
   const frame = getPart('frame', traits.frame);
@@ -187,6 +265,13 @@ export function render(traits, options = {}) {
     // turn > 0: the face looks to the viewer's right, so the left ear is the near one.
     layers.ears = turn > 0 ? half(-1, near) + half(1, far) : half(1, near) + half(-1, far);
   }
+  // Emotes move the head (and what's on it), not the shoulders: every head layer follows
+  // the same animation, pivoting in the neck.
+  if (motion.head) {
+    const move = animator.mover(motion.head, [CX, ctx.g.bottom + 30]);
+    for (const l of HEAD_LAYERS) if (layers[l]) layers[l] = move(layers[l]);
+  }
+  if (animator) defs += animator.defs();
   let figure = group(LAYERS.filter((l) => l !== 'frame' && l !== 'background'));
   // Framing: zoom the figure (not the backdrop) to a head close-up or out to the bust.
   const zoom = FRAMING[traits.framing];
@@ -224,6 +309,10 @@ const TURN_DEPTH = {
   accBack: -14, hairBack: -16, neck: -3, hairLocks: -8, face: 5, marks: 9, eyes: 11, brows: 11,
   nose: 24, facialHair: 10, mouth: 14, mustache: 15, hairFront: 3, accFace: 12, accHead: 4,
 };
+// Layers that move with the head when an emote nods or shakes it.
+const HEAD_LAYERS = ['hairBack', 'hairLocks', 'ears', 'face', 'marks', 'eyes', 'brows', 'nose', 'facialHair', 'mouth', 'mustache', 'hairFront', 'accFace', 'accHead'];
+// Mouths that are part of a race (tusks, fangs) keep their shape when an emote moves the mouth.
+const KEEP_MOUTH = new Set(['tusks', 'fangs']);
 const FORESHORTEN = new Set(['face', 'marks', 'eyes', 'brows', 'nose', 'facialHair', 'mouth', 'mustache', 'accFace']);
 // Framing zoom: scale about a point near the face (head) or the top of the canvas (bust).
 const FRAMING = { head: { s: 1.32, y: 250 }, bust: { s: 0.8, y: 110 } };

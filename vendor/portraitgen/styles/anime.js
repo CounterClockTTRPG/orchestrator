@@ -4,7 +4,7 @@
 import { registerRenderStyle, registerStyle, listParts, getPart } from '../registry.js';
 import { SIZE, facePath, mirrored, pt, blurFilter } from '../geometry.js';
 import { darken, lighten, mix } from '../color.js';
-import { eyeTypes, browTypes } from '../parts/eyes.js';
+import { eyeTypes, browTypes, shifted } from '../parts/eyes.js';
 
 const f = (n) => +n.toFixed(2);
 const ink = (c) => mix(darken(c, 0.6), '#2a1418', 0.4);
@@ -69,7 +69,8 @@ for (const part of listParts('face')) {
 
 // ---------------------------------------------------------------- eyes: big, tall irises, bold upper lash line
 for (const [id, e] of Object.entries(eyeTypes)) {
-  registerStyle('eyes', id, 'anime', ({ g, colors, uid }) => {
+  registerStyle('eyes', id, 'anime', ({ g, colors, uid, pose }) => {
+    const { lid = 0, top: kTop = 1, bot: kBot = 1, pupil: kPupil = 1, gx = 0, gy = 0 } = pose?.eyes ?? {};
     const iris = colors.eyes;
     const fem = g.fem ?? 0;
     // Anime eyes are large and tall; the type only nudges the shape.
@@ -77,37 +78,42 @@ for (const [id, e] of Object.entries(eyeTypes)) {
     const ew = (22 + fem * 2) * es;
     const h = 34 * es * ((e.top + e.bot) / 15) ** 0.5 * (1 + fem * 0.15) * (e.hooded ? 0.8 : 1) * (id === 'narrow' ? 0.65 : 1);
     const lift = e.lift * 0.8 + 1;
-    const top = -h * 0.62, bot = h * 0.42;
+    const top = -h * 0.62 * kTop, bot = h * 0.42 * kBot;
     const lash = '#1c1216';
     const clip = uid('animeEye');
     const grad = uid('animeIris');
     const sclera = `M${pt(-ew, 1)}C${pt(-ew * 0.6, top * 1.15)} ${pt(ew * 0.55, top * 1.2 - lift)} ${pt(ew, -lift)}C${pt(ew * 0.7, bot)} ${pt(-ew * 0.6, bot * 1.1)} ${pt(-ew, 1)}Z`;
     const ir = { rx: ew * 0.54, ry: h * 0.64 };
+    // Gaze: the big irises shift inside the opening (dx is mirrored for the left eye below).
+    const gdx = f(gx * ew * 0.35), gdy = f(gy * h * 0.15);
     let inner;
     if (e.glow || e.blank) {
-      inner = `<path d="${sclera}" fill="${e.blank ? '#f2f6ff' : lighten(iris, 0.5)}"/><g clip-path="url(#${clip})"><ellipse cx="0" cy="${f(top * 0.1)}" rx="${f(ir.rx * 1.2)}" ry="${f(ir.ry)}" fill="${e.blank ? '#ffffff' : iris}" opacity="0.6"/></g>`;
+      inner = () => `<path d="${sclera}" fill="${e.blank ? '#f2f6ff' : lighten(iris, 0.5)}"/><g clip-path="url(#${clip})"><ellipse cx="0" cy="${f(top * 0.1)}" rx="${f(ir.rx * 1.2)}" ry="${f(ir.ry)}" fill="${e.blank ? '#ffffff' : iris}" opacity="0.6"/></g>`;
     } else {
-      const pupil = e.slit ? `<ellipse cx="0" cy="0" rx="1.6" ry="${f(ir.ry * 0.75)}" fill="#120a0c"/>` : `<ellipse cx="0" cy="${f(ir.ry * 0.05)}" rx="${f(ir.rx * 0.45)}" ry="${f(ir.ry * 0.5)}" fill="${darken(iris, 0.7)}"/>`;
-      inner = `<path d="${sclera}" fill="#fdfcff"/><g clip-path="url(#${clip})">` +
-        `<ellipse cx="0" cy="${f(top * 0.05)}" rx="${f(ir.rx)}" ry="${f(ir.ry)}" fill="url(#${grad})"/>` + pupil +
-        `<ellipse cx="0" cy="${f(top * 0.05)}" rx="${f(ir.rx)}" ry="${f(ir.ry)}" fill="none" stroke="${darken(iris, 0.6)}" stroke-width="1"/>` +
+      const pupil = e.slit ? `<ellipse cx="0" cy="0" rx="1.6" ry="${f(ir.ry * 0.75)}" fill="#120a0c"/>` : `<ellipse cx="0" cy="${f(ir.ry * 0.05)}" rx="${f(ir.rx * 0.45 * kPupil)}" ry="${f(ir.ry * 0.5 * kPupil)}" fill="${darken(iris, 0.7)}"/>`;
+      inner = (dx) => `<path d="${sclera}" fill="#fdfcff"/><g clip-path="url(#${clip})">` +
+        shifted(`<ellipse cx="0" cy="${f(top * 0.05)}" rx="${f(ir.rx)}" ry="${f(ir.ry)}" fill="url(#${grad})"/>` + pupil +
+          `<ellipse cx="0" cy="${f(top * 0.05)}" rx="${f(ir.rx)}" ry="${f(ir.ry)}" fill="none" stroke="${darken(iris, 0.6)}" stroke-width="1"/>`, dx, gdy) +
         `<path d="M${pt(-ew, top * 1.3)}L${pt(ew, top * 1.3)}L${pt(ew, top * 0.35)}Q0,${f(top * 0.1)} ${pt(-ew, top * 0.35)}Z" fill="#9aa8d8" opacity="0.35"/>` + // lid shade on the white
         `</g>`;
     }
-    const upper = `M${pt(-ew - 1.5, 2)}C${pt(-ew * 0.6, top * 1.2)} ${pt(ew * 0.55, top * 1.25 - lift)} ${pt(ew + 3, -lift - 1)}`;
+    // Blinking lowers the lash line to just past the lower rim; skin covers the eye above it.
+    const shut = (y) => y + (bot * 1.15 - y) * lid;
+    const upper = `M${pt(-ew - 1.5, 2)}C${pt(-ew * 0.6, shut(top * 1.2))} ${pt(ew * 0.55, shut(top * 1.25 - lift))} ${pt(ew + 3, -lift - 1)}`;
+    const cover = lid > 0 ? `<g clip-path="url(#${clip})"><path d="${upper}L${pt(ew + 4, top * 1.6)}L${pt(-ew - 4, top * 1.6)}Z" fill="${colors.skin}"/></g>` : '';
     const lashes = `<path d="${upper}" fill="none" stroke="${lash}" stroke-width="${f(3.4 + fem * 0.8)}" stroke-linecap="round"/>` +
       `<path d="M${pt(ew + 1, -lift - 1)}l${f(4 + fem * 2)},${f(-3 - fem)}" stroke="${lash}" stroke-width="${f(2.2 + fem * 0.6)}" stroke-linecap="round"/>` + // outer flick
-      (fem > 0 || e.lashes ? `<path d="M${pt(ew * 0.55, top * 1.1 - lift * 0.8)}l2.5,-3.5M${pt(ew * 0.8, top * 0.7 - lift)}l3.5,-2.5" stroke="${lash}" stroke-width="1.6" stroke-linecap="round"/>` : '') +
+      ((fem > 0 || e.lashes) && !lid ? `<path d="M${pt(ew * 0.55, top * 1.1 - lift * 0.8)}l2.5,-3.5M${pt(ew * 0.8, top * 0.7 - lift)}l3.5,-2.5" stroke="${lash}" stroke-width="1.6" stroke-linecap="round"/>` : '') +
       `<path d="M${pt(ew * 0.1, bot * 1.05)}Q${pt(ew * 0.6, bot * 0.95)} ${pt(ew - 1, bot * 0.2)}" fill="none" stroke="${lash}" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>` +
       `<path d="M${pt(-ew * 0.7, top * 1.35 - 3)}Q${pt(0, top * 1.6 - 4)} ${pt(ew * 0.7, top * 1.35 - lift - 3)}" fill="none" stroke="${ink(colors.skin)}" stroke-width="1" opacity="0.6"/>`; // lid crease
-    const one = `<g transform="translate(${pt(g.cx + g.eyeDX, g.eyeY)})">${inner}${lashes}</g>`;
-    // Highlights share one light source, so they are not mirrored.
-    const hl = e.glow || e.blank ? '' : [g.cx + g.eyeDX, g.cx - g.eyeDX].map((x) =>
+    const one = (dx) => `<g transform="translate(${pt(g.cx + g.eyeDX, g.eyeY)})">${inner(dx)}${cover}${lashes}</g>`;
+    // Highlights share one light source, so they are not mirrored; they follow the gaze.
+    const hl = e.glow || e.blank || lid >= 0.5 ? '' : [g.cx + g.eyeDX, g.cx - g.eyeDX].map((x) => shifted(
       `<ellipse cx="${f(x - ir.rx * 0.38)}" cy="${f(g.eyeY + top * 0.42)}" rx="${f(ir.rx * 0.34)}" ry="${f(ir.ry * 0.28)}" fill="#fff"/>` +
-      `<circle cx="${f(x + ir.rx * 0.4)}" cy="${f(g.eyeY + ir.ry * 0.35)}" r="${f(ir.rx * 0.16)}" fill="#fff" opacity="0.9"/>`).join('');
+      `<circle cx="${f(x + ir.rx * 0.4)}" cy="${f(g.eyeY + ir.ry * 0.35)}" r="${f(ir.rx * 0.16)}" fill="#fff" opacity="0.9"/>`, gdx, gdy)).join('');
     const defs = `<clipPath id="${clip}"><path d="${sclera}"/></clipPath>` +
       `<linearGradient id="${grad}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${darken(iris, 0.45)}"/><stop offset="0.55" stop-color="${iris}"/><stop offset="1" stop-color="${lighten(iris, 0.45)}"/></linearGradient>`;
-    return { defs, eyes: one + mirrored(g.cx, one) + hl };
+    return { defs, eyes: one(gdx) + mirrored(g.cx, one(-gdx)) + hl };
   });
 }
 

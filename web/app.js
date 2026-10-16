@@ -1,6 +1,6 @@
 // Guild web UI: the hall of quests and the live council table.
 
-import { setPortrait, setPortraitTheme, STYLES } from './portraits.js';
+import { setPortrait, setPortraitTheme, setPortraitMotion, motionFor, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
 import { theme, themedRole, THEMES, presentationOfName } from './themes.js';
 import { agentElapsed, questElapsed, duration, ago } from './elapsed.js';
@@ -42,6 +42,26 @@ const archRole = () => {
   return { ...themedRole(G.settings.theme, id, r), name: G.settings.theme && G.settings.theme !== 'fantasy' ? T().leader.name : r.name };
 };
 const fullName = (name, title) => T().fullName(name, title);
+// Who is talking right now (the Archmage when it speaks, an agent when it reports), and their line.
+// The portrait lip-syncs the line for a few seconds, then goes back to its state's animation.
+const talking = new Map(); // id ('archmage' or an agent id) -> { text, timer }
+function speak(id, text) {
+  text = String(text ?? '').replace(/[#*`_>\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (!text) return;
+  clearTimeout(talking.get(id)?.timer);
+  const ms = Math.max(2500, Math.min(9000, 1200 + Math.min(text.length, 140) * 55));
+  talking.set(id, { text, timer: setTimeout(() => { talking.delete(id); repaint(id); }, ms) });
+  repaint(id);
+}
+const line = (id) => talking.get(id)?.text;
+function repaint(id) {
+  if (!G.q) return;
+  if (id === 'archmage') return renderArchmage();
+  const a = G.q.agents.find((x) => x.id === id), el = G.cards.get(id);
+  if (a && el) updateCard(el, a);
+}
+const leaderState = (a) => (a.status === 'waiting' ? 'listening' : a.status);
+
 // An agent's portrait presentation, matching its name (older agents: read from the name where it tells).
 const pres = (a, q = G.q) => a.presentation ?? presentationOfName(q?.theme ?? G.settings.theme, a.name);
 
@@ -49,6 +69,7 @@ const pres = (a, q = G.q) => a.presentation ?? presentationOfName(q?.theme ?? G.
 function applyTheme() {
   document.documentElement.dataset.theme = THEMES[G.settings.theme] ? G.settings.theme : 'fantasy';
   setPortraitTheme(T().portrait);
+  setPortraitMotion(G.settings.animate);
   for (const el of document.querySelectorAll('[data-w]')) el.textContent = W()[el.dataset.w];
   for (const el of document.querySelectorAll('[data-w-placeholder]')) el.placeholder = W()[el.dataset.wPlaceholder];
   $('.sigil').textContent = W().sigil;
@@ -82,9 +103,9 @@ function connectGlobal() {
     if (!G.q && !location.hash.startsWith('#/quest/')) renderHall();
   });
   es.addEventListener('settings', (e) => {
-    const before = G.settings.theme;
+    const { theme: before, animate } = G.settings;
     G.settings = JSON.parse(e.data).settings;
-    if (G.settings.theme !== before) { applyTheme(); rerender(); }
+    if (G.settings.theme !== before || G.settings.animate !== animate) { applyTheme(); rerender(); }
   });
   es.addEventListener('roles', (e) => { G.roles = JSON.parse(e.data).roles; });
 }
@@ -163,7 +184,12 @@ function openQuest(id) {
   G.es = es;
   es.addEventListener('snapshot', (e) => { G.q = JSON.parse(e.data); buildQuest(); });
   es.addEventListener('quest', (e) => { const d = JSON.parse(e.data); G.q.status = d.status; G.q.finishedAt = d.finishedAt; G.q.pausedMs = d.pausedMs; renderHead(); renderPlan(); renderArchmage(); renderTabs(); });
-  es.addEventListener('archmage', (e) => { G.q.archmage = JSON.parse(e.data).archmage; renderArchmage(); });
+  es.addEventListener('archmage', (e) => {
+    const before = G.q.archmage?.thought;
+    G.q.archmage = JSON.parse(e.data).archmage;
+    if (G.q.archmage.thought && G.q.archmage.thought !== before) speak('archmage', G.q.archmage.thought);
+    else renderArchmage();
+  });
   es.addEventListener('agent', (e) => {
     const { agent } = JSON.parse(e.data);
     const i = G.q.agents.findIndex((a) => a.id === agent.id);
@@ -182,7 +208,7 @@ function openQuest(id) {
     renderParty();
     renderArchmage();
   });
-  es.addEventListener('report', (e) => { const d = JSON.parse(e.data); sendOrb(d.agentId, 'up'); });
+  es.addEventListener('report', (e) => { const d = JSON.parse(e.data); sendOrb(d.agentId, 'up'); if (d.phase !== 'blocked') speak(d.agentId, d.message); });
   es.addEventListener('plan', (e) => { const d = JSON.parse(e.data); G.q.plan = d.plan; G.q.roles = d.roles; renderPlan(); });
   es.addEventListener('roles', (e) => { G.q.roles = JSON.parse(e.data).roles; renderParty(); });
   es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diff = d.diff; renderChronicle(); });
@@ -312,7 +338,7 @@ function renderArchmage() {
   const q = G.q, a = q?.archmage, el = $('#archmage-card');
   if (!a || !el) return;
   const r = role(a.role);
-  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220 });
+  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220, emotes: motionFor('leader', leaderState(a), line('archmage')), say: line('archmage') });
   el.className = `card archmage ${a.status}`;
   $('.name', el).textContent = fullName(a.name, r.title ?? a.title);
   $('.role', el).innerHTML = `<span>${esc(W().leaderOf)}</span>${a.model ? `<span class="badge">${esc(a.model)}</span>` : ''}`;
@@ -434,7 +460,7 @@ function updateCard(el, a) {
   const r = role(a.role);
   el.className = `card ${a.status}`;
   el.style.order = CARD_ORDER[a.status] ?? 2;
-  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220, presentation: pres(a) });
+  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220, presentation: pres(a), emotes: motionFor('agent', a.status, line(a.id)), say: line(a.id) });
   $('.status', el).textContent = agentWord(a.status);
   $('.status', el).className = `status ${a.status}`;
   $('.name', el).textContent = a.name;
@@ -748,7 +774,7 @@ function openAgent(id) {
       </div>
     </div>`;
   const body = $('#agent-detail-body');
-  setPortrait($('.portrait', body), { seed: a.name, role: r, status: a.status, style: style(), size: 320, presentation: pres(a) });
+  setPortrait($('.portrait', body), { seed: a.name, role: r, status: a.status, style: style(), size: 320, presentation: pres(a), emotes: motionFor('agent', a.status) });
   const fl = $('.files.big', body);
   if (fl) fl.replaceChildren(...filesOf(a.id).map((f) => fileChip(f.id, true)));
   const on = (k, fn) => { const b = $(`[data-d=${k}]`, body); if (b) b.onclick = fn; };
@@ -864,6 +890,7 @@ function openSettings() {
   $('#style-select').innerHTML = STYLES.map((s) => `<option ${s === style() ? 'selected' : ''}>${s}</option>`).join('');
   $('#theme-select').innerHTML = Object.entries(THEMES).map(([id, t]) => `<option value="${id}" ${id === (G.settings.theme ?? 'fantasy') ? 'selected' : ''}>${esc(t.label)}</option>`).join('');
   for (const k of ['maxConcurrent', 'maxAgents', 'batchSeconds']) form[k].value = G.settings[k];
+  form.animate.checked = G.settings.animate !== false;
   $('#roles-json').value = JSON.stringify(G.roles, null, 2);
   $('#roles-error').textContent = '';
   renderGallery(style());
@@ -896,6 +923,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
   try {
     G.settings = await api('PUT', '/api/settings', {
       style: f.style.value, theme: f.theme.value, maxConcurrent: Number(f.maxConcurrent.value), maxAgents: Number(f.maxAgents.value), batchSeconds: Number(f.batchSeconds.value),
+      animate: f.animate.checked,
     });
     applyTheme();
     rerender();

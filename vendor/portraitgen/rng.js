@@ -12,8 +12,8 @@ export function hashSeed(seed) {
   return (h ^= h >>> 16) >>> 0;
 }
 
-export function createRng(seed) {
-  let a = hashSeed(seed);
+export function createRng(seed, state) {
+  let a = state ?? hashSeed(seed);
   const next = () => {
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -39,6 +39,8 @@ export function createRng(seed) {
     },
     /** Derive an independent child generator (keeps streams stable per category). */
     fork: (label) => createRng(`${seed}::${label}`),
+    /** A copy that continues from the current state (replays the same draws). */
+    snapshot: () => createRng(seed, a),
   };
   return rng;
 }

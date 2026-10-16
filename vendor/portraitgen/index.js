@@ -44,6 +44,7 @@ export { PRESENTATIONS } from './presentation.js';
 export { BUILDS } from './build.js';
 export { AGES } from './age.js';
 export { EXPRESSIONS } from './expression.js';
+export { EMOTES, registerEmote } from './emote.js';
 export { LIGHTS } from './lighting.js';
 export { FRAMINGS } from './generate.js';
 export { describe, resolveColor, COLOR_NAMES } from './describe.js';

@@ -22,11 +22,41 @@ export function scleraPath(e) {
     `C${pt(ew * 0.5, bot * 1.33 - lift * 0.5)} ${pt(-ew * 0.5, bot * 1.33)} ${pt(-ew, 0)}Z`;
 }
 
-for (const [id, e] of Object.entries(eyeTypes)) {
+/**
+ * Upper lid edge, inner corner -> outer corner. `lid` closes it: 0 is the open eye,
+ * 1 lies just past the lower lid, so a closed eye leaves no sliver of white.
+ */
+export function lidEdge(e, lid = 0) {
+  const { ew, top, bot, lift } = e;
+  const cy = -top * 1.33 + (bot * 1.33 + 0.5 + top * 1.33) * lid;
+  return `M${pt(-ew - 1, 0.5)}C${pt(-ew * 0.5, cy)} ${pt(ew * 0.45, cy - lift * (1 - lid))} ${pt(ew + 1.5, -lift - 0.5)}`;
+}
+
+/** An eye shape in an emote's pose ({ top, bot, pupil } scale the opening and the pupil; gx, gy gaze). */
+export function posedEye(e, pose) {
+  if (!pose) return e;
+  return { ...e, top: e.top * (pose.top ?? 1), bot: e.bot * (pose.bot ?? 1), pupil: pose.pupil ?? 1, gx: pose.gx ?? 0, gy: pose.gy ?? 0 };
+}
+
+/** How far the iris moves for the eye's gaze, in the eye's own units: [dx, dy]. */
+export const gazeShift = (e, k = 1) => [(e.gx ?? 0) * Math.max(2, e.ew - (e.r || e.ew * 0.45)) * 0.85 * k, (e.gy ?? 0) * e.top * 0.45 * k];
+
+/** Markup moved by (dx, dy), untouched when there is no move. */
+export const shifted = (markup, dx, dy) => (dx || dy ? `<g transform="translate(${pt(dx, dy)})">${markup}</g>` : markup);
+
+/** Skin above the lid edge, drawn clipped to the eye opening. */
+export const lidCover = (e, lid) => `${lidEdge(e, lid)}L${pt(e.ew + 4, -e.top * 2 - e.lift - 6)}L${pt(-e.ew - 4, -e.top * 2 - 6)}Z`;
+
+/** The lower half of the eye outline, for an eye that is partly closed. */
+export const lowerRim = (e) => `M${pt(e.ew, -e.lift)}C${pt(e.ew * 0.5, e.bot * 1.33 - e.lift * 0.5)} ${pt(-e.ew * 0.5, e.bot * 1.33)} ${pt(-e.ew, 0)}`;
+
+for (const [id, e0] of Object.entries(eyeTypes)) {
   registerPart('eyes', {
     id,
-    label: e.label,
-    render({ g, colors, uid }) {
+    label: e0.label,
+    render({ g, colors, uid, pose }) {
+      const e = posedEye(e0, pose?.eyes);
+      const lid = pose?.eyes?.lid ?? 0;
       const skin = colors.skin;
       const iris = colors.eyes;
       const line = darken(outline(skin), 0.3);
@@ -36,40 +66,45 @@ for (const [id, e] of Object.entries(eyeTypes)) {
       const ex = g.cx + g.eyeDX;
       const ey = g.eyeY;
       let defs = `<clipPath id="${clip}"><path d="${sclera}"/></clipPath>`;
+      // Gaze: the iris shifts inside the opening (dx is mirrored for the left eye below).
+      const [gdx, gdy] = gazeShift(e);
       let inner;
       if (e.glow || e.blank) {
         const c = e.blank ? '#f4f8ff' : lighten(iris, 0.35);
         defs += `${blurFilter(glowF, 3)}`;
-        inner = `<path d="${sclera}" fill="${e.blank ? '#bcd4ff' : iris}" filter="url(#${glowF})" opacity="0.9" transform="scale(1.35)"/>` +
+        inner = () => `<path d="${sclera}" fill="${e.blank ? '#bcd4ff' : iris}" filter="url(#${glowF})" opacity="${+(0.9 * (1 - lid)).toFixed(2)}" transform="scale(1.35)"/>` +
           `<path d="${sclera}" fill="${c}"/>`;
       } else {
         const iy = 1;
         const pupil = e.slit
           ? `<ellipse cx="0" cy="${iy}" rx="1.8" ry="${e.r * 0.9}" fill="#120c0a"/>`
-          : `<circle cx="0" cy="${iy}" r="${e.r * 0.45}" fill="#120c0a"/>`;
+          : `<circle cx="0" cy="${iy}" r="${e.r * 0.45 * (e.pupil ?? 1)}" fill="#120c0a"/>`;
         const scleraFill = e.slit ? mix('#fff6d8', iris, 0.15) : '#fbf8f4';
-        inner = `<path d="${sclera}" fill="${scleraFill}"/>` +
-          `<g clip-path="url(#${clip})"><circle cx="0" cy="${iy}" r="${e.r}" fill="${iris}" stroke="${darken(iris, 0.45)}" stroke-width="1.5"/>` +
-          `<circle cx="0" cy="${iy}" r="${e.r * 0.62}" fill="${lighten(iris, 0.18)}" opacity="0.45"/>${pupil}` +
+        const irisMarkup = `<circle cx="0" cy="${iy}" r="${e.r}" fill="${iris}" stroke="${darken(iris, 0.45)}" stroke-width="1.5"/>` +
+          `<circle cx="0" cy="${iy}" r="${e.r * 0.62}" fill="${lighten(iris, 0.18)}" opacity="0.45"/>${pupil}`;
+        inner = (dx) => `<path d="${sclera}" fill="${scleraFill}"/>` +
+          `<g clip-path="url(#${clip})">${shifted(irisMarkup, dx, gdy)}` +
           `<path d="M${pt(-e.ew, -e.top * 0.4)}Q0,${-e.top * 1.6} ${pt(e.ew, -e.top * 0.4)}" fill="none" stroke="#000" stroke-width="4" opacity="0.12"/></g>`;
       }
-      const upper = `M${pt(-e.ew - 1, 0.5)}C${pt(-e.ew * 0.5, -e.top * 1.33)} ${pt(e.ew * 0.45, -e.top * 1.33 - e.lift)} ${pt(e.ew + 1.5, -e.lift - 0.5)}`;
-      let lid = `<path d="${upper}" fill="none" stroke="${line}" stroke-width="3.4" stroke-linecap="round"/>`;
-      lid += `<path d="${sclera}" fill="none" stroke="${line}" stroke-width="1.2" opacity="0.6"/>`;
-      if (e.hooded) {
-        lid = `<path d="${upper}L${pt(e.ew + 1, -e.lift + 2)}Q0,${-e.top * 0.25} ${pt(-e.ew - 1, 2)}Z" fill="${darken(skin, 0.05)}" stroke="${line}" stroke-width="2.6" stroke-linejoin="round"/>`;
+      // Blinking: skin covers the eye down to the lid edge.
+      const cover = lid > 0 ? `<g clip-path="url(#${clip})"><path d="${lidCover(e, lid)}" fill="${darken(skin, 0.05)}"/></g>` : '';
+      const upper = lidEdge(e, lid);
+      let lids = `<path d="${upper}" fill="none" stroke="${line}" stroke-width="3.4" stroke-linecap="round"/>`;
+      lids += `<path d="${lid > 0 ? lowerRim(e) : sclera}" fill="none" stroke="${line}" stroke-width="1.2" opacity="0.6"/>`;
+      if (e.hooded && !lid) {
+        lids = `<path d="${upper}L${pt(e.ew + 1, -e.lift + 2)}Q0,${-e.top * 0.25} ${pt(-e.ew - 1, 2)}Z" fill="${darken(skin, 0.05)}" stroke="${line}" stroke-width="2.6" stroke-linejoin="round"/>`;
       }
-      if (e.lashes) {
-        lid += `<path d="M${pt(e.ew * 0.55, -e.top - 1.5)}l3,-5M${pt(e.ew * 0.85, -e.top * 0.55 - e.lift)}l5,-4M${pt(e.ew + 1, -e.lift - 0.5)}l6,-2" stroke="${line}" stroke-width="2.2" stroke-linecap="round"/>`;
+      if (e.lashes && !lid) {
+        lids += `<path d="M${pt(e.ew * 0.55, -e.top - 1.5)}l3,-5M${pt(e.ew * 0.85, -e.top * 0.55 - e.lift)}l5,-4M${pt(e.ew + 1, -e.lift - 0.5)}l6,-2" stroke="${line}" stroke-width="2.2" stroke-linecap="round"/>`;
       }
       // Crease above the eye.
       const crease = `<path d="M${pt(-e.ew * 0.7, -e.top - 5)}Q${pt(0, -e.top * 1.5 - 7)} ${pt(e.ew * 0.85, -e.top - e.lift - 3)}" fill="none" stroke="${darken(skin, 0.25)}" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>`;
       const es = g.eyeScale ?? 1;
-      const one = `<g transform="translate(${pt(ex, ey)}) scale(${es})">${inner}${crease}${lid}</g>`;
-      // Specular highlights are not mirrored so both eyes share a light source.
-      const hl = e.glow || e.blank ? '' :
-        [ex, g.cx * 2 - ex].map((x) => `<circle cx="${x - e.r * 0.35 * es}" cy="${ey - e.r * 0.3 * es}" r="${Math.max(1.6, e.r * 0.26 * es)}" fill="#fff" opacity="0.9"/>`).join('');
-      return { defs, eyes: one + mirrored(g.cx, one) + hl };
+      const one = (dx) => `<g transform="translate(${pt(ex, ey)}) scale(${es})">${inner(dx)}${cover}${crease}${lids}</g>`;
+      // Specular highlights are not mirrored so both eyes share a light source; they follow the gaze.
+      const hl = e.glow || e.blank || lid >= 0.5 ? '' :
+        [ex, g.cx * 2 - ex].map((x) => `<circle cx="${x + (gdx - e.r * 0.35) * es}" cy="${ey + (gdy - e.r * 0.3) * es}" r="${Math.max(1.6, e.r * 0.26 * es)}" fill="#fff" opacity="0.9"/>`).join('');
+      return { defs, eyes: one(gdx) + mirrored(g.cx, one(-gdx)) + hl };
     },
   });
 }

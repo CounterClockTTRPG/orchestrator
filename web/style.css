@@ -147,6 +147,8 @@ label { display: block; margin-bottom: 0.8rem; color: var(--muted); font-size: 0
 .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
 .row > * { flex: 1 1 180px; }
 .row > .narrow { flex: 0 1 140px; }
+.row > label.check { display: flex; align-items: center; gap: 0.4rem; align-self: center; color: var(--ink); cursor: pointer; }
+.row > label.check input { width: auto; margin: 0; }
 fieldset.seg { border: 1px solid var(--line); border-radius: 8px; padding: 0.4rem 0.7rem; margin: 0 0 0.8rem; }
 fieldset.seg legend { color: var(--muted); font-size: 0.85rem; padding: 0 0.3rem; }
 fieldset.seg label { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0; color: var(--ink); }
