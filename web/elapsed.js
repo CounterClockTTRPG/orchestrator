@@ -19,6 +19,21 @@ export function questElapsed(q, now = Date.now()) {
   return Math.max(0, end - ms(q.createdAt) - (q.pausedMs ?? 0));
 }
 
+const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+/** "just now", "10 minutes ago", "2 hours ago", "yesterday". */
+export function ago(ts, now = Date.now()) {
+  const t = ms(ts);
+  if (Number.isNaN(t)) return '';
+  const s = Math.round((now - t) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return RELATIVE.format(-m, 'minute');
+  const h = Math.round(m / 60);
+  if (h < 24) return RELATIVE.format(-h, 'hour');
+  return RELATIVE.format(-Math.round(h / 24), 'day');
+}
+
 /** 42s, 3m 05s, 1h 07m. */
 export function duration(t) {
   if (t == null || Number.isNaN(t)) return '';
