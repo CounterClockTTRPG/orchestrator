@@ -15,15 +15,17 @@ let portraitTheme = 'fantasy';
 /** The portraitgen theme (fantasy, modern or scifi) used when a call does not name one. */
 export function setPortraitTheme(id) { portraitTheme = id; }
 
-export function portraitSvg({ seed, role, status, style, size = 160, theme = portraitTheme }) {
+// `presentation` (masculine, feminine, androgynous) keeps the face in line with the agent's name; without one,
+// portraitgen draws it from the seed.
+export function portraitSvg({ seed, role, status, style, size = 160, theme = portraitTheme, presentation }) {
   const expression = EXPRESSION[status] ?? 'neutral';
-  const key = `${theme}|${seed}|${role?.describe}|${JSON.stringify(role?.colors ?? {})}|${expression}|${style}|${size}`;
+  const key = `${theme}|${seed}|${role?.describe}|${JSON.stringify(role?.colors ?? {})}|${expression}|${style}|${size}|${presentation ?? ''}`;
   let svg = cache.get(key);
   if (!svg) {
     try {
       const traits = generate({
         theme, seed, describe: role?.describe ?? 'human adventurer',
-        colors: role?.colors, expression, style,
+        colors: role?.colors, expression, style, presentation,
       });
       svg = render(traits, { size });
     } catch (err) {

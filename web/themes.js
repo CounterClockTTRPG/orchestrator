@@ -75,7 +75,12 @@ export const THEMES = {
       scribe: { title: 'Writer', describe: 'smiling human in a jacket' },
     },
     looks: ['human professional', 'young human in a hoodie', 'human in a jacket', 'human in a sweater'],
-    names: ['Alex', 'Sam', 'Jordan', 'Priya', 'Lena', 'Tom', 'Noor', 'Mateo', 'Yuki', 'Ines', 'Femi', 'Clara', 'Ravi', 'Sofie', 'Jonas', 'Amara', 'Lucas', 'Hana', 'Omar', 'Elif', 'Bram', 'Zoe', 'Kenji', 'Maya', 'Pieter', 'Aisha', 'Daniel', 'Lotte', 'Wei', 'Nadia'],
+    // Grouped by the portrait's presentation; neutral names suit anyone.
+    names: {
+      feminine: ['Priya', 'Lena', 'Yuki', 'Ines', 'Clara', 'Sofie', 'Amara', 'Hana', 'Elif', 'Zoe', 'Maya', 'Aisha', 'Lotte', 'Nadia'],
+      masculine: ['Tom', 'Mateo', 'Femi', 'Ravi', 'Jonas', 'Lucas', 'Omar', 'Bram', 'Kenji', 'Pieter', 'Daniel', 'Tariq', 'Lars', 'Diego'],
+      neutral: ['Alex', 'Sam', 'Jordan', 'Noor', 'Wei'],
+    },
   },
   scifi: {
     label: 'Sci-fi', portrait: 'scifi',
@@ -116,11 +121,29 @@ export const THEMES = {
       scribe: { title: 'Archivist', describe: 'smiling alien archivist' },
     },
     looks: ['human crew member in a jumpsuit', 'android', 'alien', 'human pilot'],
-    names: ['Vex', 'Orin', 'Kestrel', 'Nova', 'Juno', 'Talon', 'Lyra', 'Cass', 'Rook', 'Sable', 'Zephyr', 'Ixa', 'Corin', 'Halley', 'Tycho', 'Rhea', 'Kade', 'Mira', 'Solen', 'Quill', 'Astra', 'Dax', 'Wren', 'Ceres', 'Pax', 'Io', 'Riven', 'Echo', 'Saren', 'Calix'],
+    names: {
+      feminine: ['Nova', 'Juno', 'Lyra', 'Ixa', 'Halley', 'Rhea', 'Mira', 'Astra', 'Wren', 'Ceres', 'Echo'],
+      masculine: ['Vex', 'Orin', 'Talon', 'Rook', 'Corin', 'Tycho', 'Kade', 'Solen', 'Dax', 'Riven', 'Saren', 'Calix'],
+      neutral: ['Kestrel', 'Cass', 'Sable', 'Zephyr', 'Quill', 'Pax', 'Io'],
+    },
+    presentations: ['feminine', 'masculine', 'feminine', 'masculine', 'androgynous'], // androids and aliens
+
   },
 };
 
 export const THEME_IDS = Object.keys(THEMES);
+
+/**
+ * The presentation a themed name implies, for agents recruited before presentations were stored; undefined for a
+ * neutral or unknown name (the portrait then picks one from its seed, as before).
+ */
+export function presentationOfName(themeId, name) {
+  const names = THEMES[themeId]?.names;
+  const base = String(name ?? '').replace(/ [A-Z]\.$/, '');
+  if (names?.feminine.includes(base)) return 'feminine';
+  if (names?.masculine.includes(base)) return 'masculine';
+  return undefined;
+}
 export const theme = (id) => THEMES[id] ?? THEMES.fantasy;
 
 function hash(s) {
@@ -138,10 +161,17 @@ export function themedRole(themeId, roleId, role) {
   return { ...role, describe: t.looks[hash(roleId) % t.looks.length] };
 }
 
-/** A name from the theme's list, unique among `taken`; null for fantasy (named by race instead). */
-export function themedName(themeId, taken, salt = '') {
-  const list = theme(themeId).names;
-  if (!list) return null;
+/**
+ * A name from the theme's list that fits `presentation` (androgynous: a neutral name), unique among `taken`;
+ * null for fantasy (named by race instead).
+ */
+export function themedName(themeId, taken, salt = '', presentation) {
+  const names = theme(themeId).names;
+  if (!names) return null;
+  const fitting = presentation === 'androgynous' ? names.neutral
+    : names[presentation] ? [...names[presentation], ...names.neutral]
+    : [...names.feminine, ...names.masculine, ...names.neutral];
+  const list = fitting.length ? fitting : [...names.feminine, ...names.masculine, ...names.neutral];
   for (let i = 0; i < list.length * 3; i++) {
     const base = list[hash(`${salt}:${i}`) % list.length];
     const name = i < list.length ? base : `${base} ${String.fromCharCode(65 + (i % 26))}.`;

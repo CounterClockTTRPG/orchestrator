@@ -2,7 +2,7 @@
 
 import { setPortrait, setPortraitTheme, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
-import { theme, themedRole, THEMES } from './themes.js';
+import { theme, themedRole, THEMES, presentationOfName } from './themes.js';
 import { agentElapsed, questElapsed, duration } from './elapsed.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -38,6 +38,8 @@ const archRole = () => {
   return { ...themedRole(G.settings.theme, id, r), name: G.settings.theme && G.settings.theme !== 'fantasy' ? T().leader.name : r.name };
 };
 const fullName = (name, title) => T().fullName(name, title);
+// An agent's portrait presentation, matching its name (older agents: read from the name where it tells).
+const pres = (a, q = G.q) => a.presentation ?? presentationOfName(q?.theme ?? G.settings.theme, a.name);
 
 /** Dress the page in the current theme: colours and fonts (CSS), portraits, and the static wording. */
 function applyTheme() {
@@ -143,7 +145,7 @@ function renderHall() {
       d.className = 'mini';
       d.title = `${a.name} (${a.status})`;
       el.append(d);
-      setPortrait(d, { seed: a.name, role: role(a.role, null), status: a.status, style: 'illustrated', size: 64 });
+      setPortrait(d, { seed: a.name, role: role(a.role, null), status: a.status, style: 'illustrated', size: 64, presentation: pres(a, q) });
     }
   }
 }
@@ -414,7 +416,7 @@ function updateCard(el, a) {
   const r = role(a.role);
   el.className = `card ${a.status}`;
   el.style.order = CARD_ORDER[a.status] ?? 2;
-  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220 });
+  setPortrait($('.portrait', el), { seed: a.name, role: r, status: a.status, style: style(), size: 220, presentation: pres(a) });
   $('.status', el).textContent = agentWord(a.status);
   $('.status', el).className = `status ${a.status}`;
   $('.name', el).textContent = a.name;
@@ -601,7 +603,7 @@ function renderLog() {
     else if (e.who === 'guild') w.textContent = W().sigil;
     else {
       const a = G.q.agents.find((x) => x.id === e.who);
-      if (a) { setPortrait(w, { seed: a.name, role: role(a.role), status: 'queued', style: 'illustrated', size: 64 }); w.style.cursor = 'pointer'; w.onclick = () => openAgent(a.id); }
+      if (a) { setPortrait(w, { seed: a.name, role: role(a.role), status: 'queued', style: 'illustrated', size: 64, presentation: pres(a) }); w.style.cursor = 'pointer'; w.onclick = () => openAgent(a.id); }
     }
     if (e.kind === 'done' || e.kind === 'failed') $('.text', li).onclick = () => openAgent(e.who);
     ol.append(li);
@@ -687,7 +689,7 @@ function openAgent(id) {
       </div>
     </div>`;
   const body = $('#agent-detail-body');
-  setPortrait($('.portrait', body), { seed: a.name, role: r, status: a.status, style: style(), size: 320 });
+  setPortrait($('.portrait', body), { seed: a.name, role: r, status: a.status, style: style(), size: 320, presentation: pres(a) });
   const fl = $('.files.big', body);
   if (fl) fl.replaceChildren(...filesOf(a.id).map((f) => fileChip(f.id, true)));
   const on = (k, fn) => { const b = $(`[data-d=${k}]`, body); if (b) b.onclick = fn; };
