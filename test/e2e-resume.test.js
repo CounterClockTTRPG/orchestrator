@@ -40,32 +40,7 @@ before(async () => {
 });
 after(() => h?.stop());
 
-/**
- * Stop the server the way a shutdown should: quests marked interrupted first (so no Archmage is revived), sessions
- * killed and awaited. Then a fresh Guild loads the same GUILD_HOME and serves on a new port; `h` points to it.
- */
-async function restart() {
-  const old = h.guild, running = [];
-  for (const q of old.quests.values()) {
-    clearInterval(q.timer);
-    q.markInterrupted();
-    running.push(...[q.arch, ...q.sessions.values()].filter(Boolean));
-  }
-  for (const s of running) s.kill();
-  await h.waitFor(() => running.every((s) => s.exited || !s.proc), { what: 'the sessions to exit' });
-  for (const q of old.quests.values()) clearTimeout(q.saveTimer); // nothing stale may overwrite the new server's saves
-  h.server.closeAllConnections();
-  await new Promise((r) => h.server.close(r));
-
-  const { createServer } = await import('../server.js');
-  const guild = new old.constructor({ port: 0 });
-  const server = createServer(guild, { token: h.token });
-  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  Object.assign(guild, { port, url: `http://127.0.0.1:${port}` });
-  Object.assign(h, { guild, server, port, url: guild.url });
-}
-
+const restart = () => h.restart();
 const startOf = (starts, agentId) => starts.find((s) => s.mcpServers.guild?.env.GUILD_AGENT_ID === agentId);
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim();
 
@@ -107,7 +82,7 @@ test('an interrupted read quest is recorded as interrupted by a fresh server, an
   assert.equal(after.find((s) => s.mcpServers.council).mcpServers.council.env.GUILD_URL, h.url, 'the new sessions reach the new server');
 });
 
-test('the Archmage is told who is resuming, and what the party looks like now', { todo: 'not in the analysis: resume() puts this.partyReport() (a Promise) in the template without awaiting it' }, async () => {
+test('the Archmage is told who is resuming, and what the party looks like now', async () => {
   const msg = h.fakeLog({ event: 'message' }).find((m) => /the human has now resumed it/.test(m.text));
   assert.ok(msg, 'the Archmage got a resume message');
   assert.match(msg.text, /These agents were interrupted and are resuming: .+ \(a1\)\./);
