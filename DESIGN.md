@@ -196,6 +196,28 @@ The downtime is kept in `pausedMs` and left out of running times.
 - **Queue order:** agents whose chain of dependents is longest start first; equal ones in arrival order.
 - **Interruptions:** waiting agents stay waiting when the server stops, and are re-checked on resume.
 
+## Code layout (`lib/`)
+
+`guild.js` was one 1500-line file; it is now split by concern. `Quest` stays one class, with its state on
+`quest.s`, but its methods live in several files: each module exports a group of methods that `quest.js` copies
+onto `Quest.prototype` (`mixin` in `common.js`, which refuses a name defined twice). The methods still call each
+other through `this`, so a test can replace one on an instance, and no module imports another's methods, so there
+are no import cycles.
+
+| Module | What it holds |
+|---|---|
+| `guild.js` | `Guild`: the quest registry, settings, the role catalog, `createQuest`. Re-exports `Quest`, `cleanRole` and `tooBroad` |
+| `quest.js` | `Quest`: state, events and saving, the log, agents and cost; lifecycle (interrupt, resume, finish, cancel, fail, end) |
+| `archmage.js` | the Archmage's session, inbox and flushing, nudges, revival, talk with the human, the council tool dispatch |
+| `party.js` | plan and approval, recruiting, `after` dependencies, scheduling and agent sessions, reports, asks, answers, messages, recalls, the party report |
+| `workspace.js` | repositories of a new quest, integration and agent worktrees, commit tallies, merging the party, finish checks, delivery, cleanup |
+| `roles.js` | `cleanRole`, invented roles, the tool tiers and permissions of the Archmage and of members |
+| `prompts.js` | pure builders of the system prompts, briefings and first messages (no I/O: callers pass files and history in) |
+| `attachments.js` | file types and size limit, path checks, attaching and serving files |
+| `scheduler.js` | `Scheduler`: the global slots and the priority queue; `Guild` delegates `acquire`, `release` and `dequeue` to it |
+| `applications.js` | the `Guild` methods for applications (list, save, adopt, delete, history); `apps.js` keeps the pure helpers |
+| `common.js` | constants and helpers the quest modules share (`ACTIVE`, `FINISHED_AGENT`, `now`, `clip`, `mixin`) |
+
 ## End-to-end tests
 
 - `server.js` exports `createServer(guild, { token, hosts })` and listens only when run as the main module, so a
