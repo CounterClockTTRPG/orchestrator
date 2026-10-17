@@ -213,5 +213,11 @@ orchestrator role has `orchestrator: true` and a fixed `name`.
 npm test
 ```
 
+The end-to-end tests (`test/e2e-*.test.js`) run whole quests in seconds without Claude: `test/helpers/e2e.js` starts
+the server in the test process (`createServer` from `server.js`) on a random port with a scratch `GUILD_HOME` and
+scratch git repositories, and `test/fixtures/fake-claude.js` stands in for `claude`. It speaks the same stream-json
+protocol, starts the real MCP servers and calls their tools, and follows a JSON scenario: what the Archmage and each
+agent say, call, commit and report. The step types are listed at the top of `fake-claude.js`.
+
 portraitgen is vendored from `raf/portraitgen` (see `vendor/portraitgen/VENDORED.md`). To update it, copy its `src/`
 again.
