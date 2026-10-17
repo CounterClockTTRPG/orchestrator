@@ -53,7 +53,7 @@ other Claude Code ──MCP (guild-mcp)──REST──┤        └─ MCP "co
 - **Subagents**: MCP tools from `lib/report-mcp.js`:
   - `report_progress(percent, phase, message)`, at start, after each step, and at 100 at the end.
   - `ask(question)` marks the agent *blocked* and **waits** for an answer from you or the Archmage. The answer is
-    the tool result.
+    the tool result. One question is open at a time; after 4 h without an answer the agent is told to decide itself.
   - Their final message (the stream's `result` event) is their report; the server forwards it to the Archmage as `done`.
 - **Live messages** to a running agent are written to its stdin as a stream-json user message and are seen at its
   next turn. If it has already finished, the session is resumed (`--resume <session_id>`) with the message.
@@ -132,12 +132,69 @@ detached and retries.
 
 ## Storage
 
-`~/.guild/quests/<id>/quest.json` (state, written on change) and `events.jsonl` (append-only; the SSE replay source),
-plus `~/.guild/worktrees/`. On restart, quests that were running are marked **interrupted**; their session ids are
-kept, and *Resume* (`POST /api/quests/:id/resume`) carries on: the Archmage and every interrupted agent are restarted
-with `claude --resume` in their worktrees (re-created from their branches if removed), told what happened, and the
-Archmage gets the party's state. Agents that never set out start afresh; a question that was open must be asked again.
-The downtime is kept in `pausedMs` and left out of running times.
+`~/.guild/quests/<id>/` holds `quest.json` (the state), `events.jsonl` (append-only; the SSE replay source) and the
+MCP configs; worktrees live under `~/.guild/worktrees/<id>/`. Quest ids are the date plus 8 random hex digits
+(`20261017-1a2b3c4d`), drawn again if a quest, its directory or its worktrees already use one.
+
+**What `quest.json` holds:** the goal, mode and directories, the repositories and branches (edit mode), the plan, the
+Archmage (session id, cost, its open question to you) and every agent (status, task, reports, session id, branch and
+worktrees, notes not yet delivered, and its open question `ask`: `{ id, question, human, askedAt, deadline }`), the
+log, the chronicle and delivery, and `pending`: what the Archmage has not taken in yet:
+- `messages`: its inbox (reports, dispatches and your messages waiting for the next batch), with in front the batch of
+  a turn that had not ended (the process may die before it does; its first message is already in its session),
+- `humanWaiting`: one of them is from you, so the turn that gets them answers you,
+- `nudges`: how often it was reminded, per kind (`plan`, `waiting`, `finish`).
+
+**Saves:** a change is saved 300 ms after the last event (one write for a burst), and at once where it matters
+(interrupting, the end of a quest). Each write goes to its own temp file (`quest.json.<pid>-<random>.tmp`), then is
+renamed over the old one, so a crash leaves the old file or the new one, never half of one. A failed write (a full
+disk) is logged and the quest goes on. quest.json may lag the event log after a crash, so `seq` is taken from
+`events.jsonl` on load.
+
+**Shutdown** (SIGINT, SIGTERM): `guild.stopping` is set, so nothing starts, ends or is revived any more, and no
+quest can be posted. Each running quest logs that the server is stopping, is marked **interrupted** (its status
+before is kept as `resumeStatus`), its working, queued and blocked agents too (waiting ones stay `waiting`), and is
+saved at once. Only then are its sessions killed and awaited, so their exits revive nobody and fail nobody. A quest
+that was already ending gets 5 s to finish. Pending saves are written, and the process exits (after 10 s whatever
+happens; a second signal is ignored). A server that died without this finds its running quests on the next start and
+marks them interrupted the same way.
+
+**Resume** (`POST /api/quests/:id/resume`, the *Resume* button, MCP `resume_quest`), only for an *interrupted* quest:
+- restores the status it had and checks the worktrees: one removed meanwhile is made again from its branch, commits
+  and all (the integration worktree of each repository, and each interrupted agent's),
+- revives the Archmage with `claude --resume` and a briefing: who is resuming, who is waiting on a question, its own
+  open question to you, and the party report,
+- then delivers the restored inbox to it as one urgent batch (answering you if `humanWaiting`), and keeps the nudge
+  counts; the retry count of failed turns starts afresh,
+- restarts each interrupted agent with `--resume` in its worktree, told that it was interrupted; an agent that never
+  set out starts afresh,
+- re-asks open questions: an agent that was blocked on one is `blocked` again with the same question, shown on its
+  card, in the party report and to the Archmage (`[blocked]` or `[check-in]`). Its session is not started (it holds no
+  slot); the answer from you or the Archmage, or the deadline, wakes it with `--resume` and the reply. The downtime
+  does not count against its deadline,
+- leaves waiting agents waiting: they set out when their prerequisites finish, as before,
+- keeps the downtime in `pausedMs`, left out of running times.
+
+## Lifecycle safeguards
+
+Fixed after the self-analysis (lifecycle bugs 1–15 in `guild-self-analysis.md`):
+- **Processes:** every claude process is spawned in its own process group (`detached`), and a kill signals the group
+  (SIGTERM, then SIGKILL after 3 s), so background commands an agent started through Bash die with it. A quest's
+  worktrees are removed only once every process in them has exited (the Archmage gets a minute to finish its turn).
+- **Sessions:** only an agent's current session speaks for it. Waking an agent retires its old session; that one's
+  late exit only gives back its slot, and the new `--resume` process waits for it to be gone, so one session id never
+  has two processes. An agent recalled, or a quest ended or interrupted, while it was being set up does not start.
+- **Asks:** an agent has one open question at a time (a new one withdraws the old), with a deadline of 4 h after which
+  it is told to decide for itself. Its question is settled when its session ends, and only a `blocked` agent can be
+  answered.
+- **Nudges** are counted per kind (no plan: 2, waiting agents nobody will release: 3, party finished: 3) and reset
+  after a turn that moves the quest on or answers you, so talking with you after the party finishes cannot fail it.
+- **Failed turns:** an `is_error` result (rate limit, credit, overload) is not a stall: the same batch is sent again
+  after 5 s, doubling up to 5 min, 8 times; then the quest fails with the reason. A batch written into a dead pipe, or
+  given in a turn whose process died, goes back into the inbox for the revived Archmage.
+- **Errors:** each session event handler is guarded: an error fails that agent (or is logged, for the Archmage), never
+  the server. The process logs unhandled rejections and exceptions and keeps serving. `end()` runs once.
+- **SSE:** a client with more than 4 MB unread is dropped; it reconnects and replays from its last event id.
 
 ## UI
 
@@ -194,7 +251,8 @@ The downtime is kept in `pausedMs` and left out of running times.
   `message_agent` or `cancel_agent`. If nobody is working and agents still wait, the Archmage is reminded three
   times, then the waiting agents are recalled.
 - **Queue order:** agents whose chain of dependents is longest start first; equal ones in arrival order.
-- **Interruptions:** waiting agents stay waiting when the server stops, and are re-checked on resume.
+- **Interruptions:** waiting agents stay waiting when the server stops and through a resume; they set out once their
+  prerequisites (resumed themselves) are done.
 
 ## Code layout (`lib/`)
 
@@ -229,8 +287,10 @@ are no import cycles.
   are exercised for real. Each session follows a script chosen from a JSON scenario by matching its system prompt
   and first message; `--resume` goes on from where the session stopped, or runs the entry's `resume` steps.
 - Teardown marks the quests interrupted before killing the sessions, so no Archmage is revived (lifecycle bug 1),
-  waits for them to exit, and only then removes the scratch home.
+  waits for them to exit, and only then removes the scratch home. `h.restart()` does the same, then loads a fresh
+  Guild on the same home, for resume tests; `test/e2e-shutdown.test.js` stops the real `node server.js` with SIGTERM.
 
 ## Out of scope for v1
 
-Auth, cost budgets, nested recruiting, pushing or opening PRs. (Resuming interrupted quests was added after v1.)
+Auth, cost budgets, nested recruiting, pushing or opening PRs. (Resuming interrupted quests, and the API token with
+per-quest secrets for `/internal`, were added after v1.)

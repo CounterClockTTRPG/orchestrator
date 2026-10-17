@@ -150,11 +150,18 @@ other Claude Code ─ MCP (bin/guild-mcp.js) ────┤                    
 - **Messages to a working agent** come back in the reply to its next `report_progress` call (agents report often).
   A finished agent is resumed with `claude --resume`.
 - **`ask`** blocks the agent until you or the Archmage answer. The browser card shows the question with an answer box.
+  An agent has one question open at a time; after 4 h without an answer it is told to decide for itself.
 - **Edit mode:** worktrees live in `~/.guild/worktrees/<quest>/`. Agent branches are `guild/<quest>/<agent>`, the
   merged result is `guild/<quest>/party`, and leftover uncommitted work is committed before worktrees are removed.
-- **Persistence:** `~/.guild/quests/<id>/quest.json` and `events.jsonl`. Quests that were running when the server
-  stopped come back as *interrupted*; **Resume** restarts the Archmage and the interrupted agents from their sessions
-  (`claude --resume`).
+- **Persistence:** `~/.guild/quests/<id>/quest.json` (the quest, its party, their open questions, and the reports and
+  messages still waiting for the Archmage) and `events.jsonl`. Saves are atomic and written at once when the server
+  stops.
+- **Stopping the server** (Ctrl-C, `systemctl stop`) marks its running quests and their working agents *interrupted*,
+  saves them, and only then stops the claude processes (with anything they started). Nothing is revived or failed.
+- **Resume** (the button, `POST /api/quests/:id/resume`, MCP `resume_quest`) carries on an *interrupted* quest: the
+  Archmage and the interrupted agents restart from their sessions (`claude --resume`) in their worktrees (made again
+  if you removed them), the Archmage gets what was waiting in its inbox, and a question an agent was blocked on is
+  open again: answer it and the agent carries on with your answer. Agents waiting for others keep waiting.
 - **Replay:** stored events are numbered. A client that reconnects to `/api/quests/:id/events` with `?since=<seq>` or
   `Last-Event-ID` (EventSource sends it by itself) gets the events it missed instead of a fresh snapshot.
 - **Running time** is shown for the quest and every agent (wall-clock time, less any time the server was down).
