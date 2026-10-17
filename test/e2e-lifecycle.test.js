@@ -36,6 +36,31 @@ const sessions = [
   { match: { archmage: true, message: 'GOAL-ASK-TWO' }, steps: [plan('TASK-ASK-TWO'), { result: 'Proposed.' }, { wait: 'never' }] },
   { match: { role: 'Scout', task: 'TASK-ASK-TWO' }, steps: [{ hang: true }] },
 
+  // An agent whose question nobody answers: the test shortens the deadline before it asks.
+  { match: { archmage: true, message: 'GOAL-ASK-LATE' }, steps: [
+    plan('TASK-ASK-LATE'), { result: 'Proposed.' },
+    { wait: '\\[unanswered\\]' }, { wait: '\\(a1\\) has returned' }, finish] },
+  { match: { role: 'Scout', task: 'TASK-ASK-LATE' }, steps: [
+    { sleep: 400 }, { call: 'ask', args: { question: 'Anyone?' }, as: 'answer' },
+    { result: 'Decided myself. ${answer}' }] },
+
+  // ── starting and waking (bugs 2 and 6) ──
+  // The test recalls the agent, or ends the quest, while its worktree is being made; the Archmage only waits.
+  { match: { archmage: true, message: 'GOAL-START-CANCEL' }, steps: [{ sleep: 300 }, plan('TASK-START'), { result: 'Proposed.' }, { wait: 'never' }] },
+  { match: { archmage: true, message: 'GOAL-START-END' }, steps: [{ sleep: 300 }, plan('TASK-START'), { result: 'Proposed.' }, { wait: 'never' }] },
+  { match: { role: 'Scout', task: 'TASK-START' }, steps: [{ result: 'Should never have started.' }] },
+  // The agent's process lingers after its final report, and the human wakes it meanwhile.
+  // The Archmage wakes it in the same turn it hears of the report, so the finished party is not nudged meanwhile.
+  { match: { archmage: true, message: 'GOAL-WAKE' }, steps: [
+    plan('TASK-WAKE'), { result: 'Proposed.' },
+    { wait: '\\(a1\\) has returned' }, { call: 'message_agent', args: { agentId: 'a1', text: 'One more thing.' } }, { result: 'Woke it.' },
+    { wait: '\\(a1\\) has returned' }, finish] },
+  { match: { role: 'Scout', task: 'TASK-WAKE' }, steps: [{ result: 'First report.' }, { sleep: 1500 }], resume: [{ result: 'Woken: ${message}' }] },
+
+  // ── a handler that throws (bug 8) ──
+  { match: { archmage: true, message: 'GOAL-THROW' }, steps: [plan('TASK-THROW'), { result: 'Proposed.' }, { wait: '\\[failed\\]' }, finish] },
+  { match: { role: 'Scout', task: 'TASK-THROW' }, steps: [{ result: 'Fine.' }] },
+
   // ── nudges ──
   // The Archmage ends each turn with nothing proposed; after the nudges the quest fails.
   { match: { archmage: true, message: 'GOAL-NUDGE-PLAN' }, steps: [{ say: 'Hmm.' }, { result: 'No plan yet.' }] },
@@ -94,7 +119,7 @@ test('the human can answer an agent through the route, and the agent carries on'
   assert.ok(messagesTo(id, /The human answered .* \(a1\): Large\./).length >= 1, 'the Archmage is told what the human said');
 });
 
-test('answering an agent that has died does not bring it back to life (bug 3)', { todo: 'bug 3: answerAgent sets a dead agent back to working, so the quest never finishes' }, async () => {
+test('answering an agent that has died does not bring it back to life (bug 3)', async () => {
   const { id } = await h.createQuest({ goal: 'GOAL-ASK-DEAD', cwd: repo });
   await h.waitAgent(id, 'a1', 'blocked');
   h.live(id).sessions.get('a1').kill();
@@ -108,9 +133,13 @@ test('answering an agent that has died does not bring it back to life (bug 3)', 
   await h.post(`/api/quests/${id}/cancel`);
   await settled(id);
   assert.equal(after, 'failed', `a dead agent stays dead (the answer said: ${answered.message ?? answered.text})`);
+  assert.equal(answered.status, 400, 'the human is told there is no open question');
+  const a = (await h.quest(id)).agents[0];
+  assert.equal(a.question, null, 'its question died with its session');
+  assert.equal(a.ask, null);
 });
 
-test('two asks from one agent are both settled by the answer (bug 9)', { todo: 'bug 9: the second ask overwrites askId, so the first long-poll hangs for up to 24 h' }, async () => {
+test('two asks from one agent are both settled by the answer (bug 9)', async () => {
   const { id } = await h.createQuest({ goal: 'GOAL-ASK-TWO', cwd: repo });
   await h.waitAgent(id, 'a1', 'working');
   const secret = { 'x-guild-secret': h.live(id).secret };
@@ -127,6 +156,85 @@ test('two asks from one agent are both settled by the answer (bug 9)', { todo: '
   await h.post(`/api/quests/${id}/cancel`);
   await settled(id);
   assert.equal(stuck, 0, `${stuck} of ${accepted.length} accepted asks still wait for an answer`);
+  assert.match(polls[0].body.answer, /You asked another question since \("Second\?"\), so this one is withdrawn/);
+  assert.equal(polls[1].body.answer, '(from the human) Reply 1.', 'the first answer goes to the latest question');
+});
+
+test('a question that passes its deadline is settled, and the agent decides for itself (bug 9)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-ASK-LATE', cwd: repo });
+  h.live(id).askDeadlineMs = 300; // the agent asks after 400 ms
+  const blocked = await h.waitAgent(id, 'a1', 'blocked');
+  assert.deepEqual(Object.keys(blocked.ask).sort(), ['askedAt', 'deadline', 'human', 'id', 'question'], 'the open question is plain data');
+  assert.equal(blocked.ask.question, 'Anyone?');
+  assert.equal(Date.parse(blocked.ask.deadline) - Date.parse(blocked.ask.askedAt), 300);
+  const q = await h.waitQuest(id, 'done');
+  assert.match(q.agents[0].result, /^Decided myself\. Answer: No answer came within 1 min\. Decide for yourself/);
+  assert.equal(q.agents[0].ask, null);
+  assert.ok(messagesTo(id, /\[unanswered\] .* \(a1\) had no answer within 1 min to: Anyone\?/).length >= 1, 'the Archmage hears of it');
+});
+
+// ── starting and waking ──
+
+const startsOfAgent = (id, agentId) => startsOf(id).filter((s) => s.mcpServers.guild?.env.GUILD_AGENT_ID === agentId);
+
+test('an agent recalled while its worktree is being made does not start, and gives back its slot (bug 2)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-START-CANCEL', cwd: repo, mode: 'edit' });
+  const q = h.live(id);
+  let worktreeMade;
+  q.startHook = async (a) => {
+    worktreeMade = a.dir;
+    await h.post(`/api/quests/${id}/agents/${a.id}/cancel`);
+  };
+  const a = await h.waitAgent(id, 'a1', 'cancelled');
+  await h.waitFor(() => (q.s.log.some((e) => /did not set out: recalled/.test(e.text)) ? true : null), { what: 'the start to be called off' });
+  assert.ok(worktreeMade, 'it was cancelled after its worktree was made');
+  assert.equal(a.status, 'cancelled');
+  assert.equal(startsOfAgent(id, 'a1').length, 0, 'no session was started');
+  assert.equal(q.sessions.size, 0);
+  assert.equal(h.guild.running, 0, 'its slot is free again');
+  // With its only member recalled the party is finished, and the Archmage (which only waits) may already have
+  // been nudged out of the quest.
+  await h.post(`/api/quests/${id}/cancel`).catch(() => {});
+  await settled(id);
+  assert.equal((await h.quest(id)).agents[0].status, 'cancelled');
+});
+
+test('an agent being set up when the quest ends does not start (bug 2)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-START-END', cwd: repo, mode: 'edit' });
+  const q = h.live(id);
+  q.startHook = () => h.post(`/api/quests/${id}/cancel`);
+  const s = await settled(id);
+  await h.waitFor(() => (q.s.log.some((e) => /did not set out: the quest is cancelled/.test(e.text)) ? true : null), { what: 'the start to be called off' });
+  assert.equal(s.status, 'cancelled');
+  assert.equal(s.agents[0].status, 'cancelled');
+  assert.equal(startsOfAgent(id, 'a1').length, 0, 'no session was started');
+  assert.equal(h.guild.running, 0, 'its slot is free again');
+});
+
+test('an agent woken while its last process is still closing waits for it, and that exit does not fail it (bug 6)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-WAKE', cwd: repo });
+  const q = await h.waitQuest(id, 'done');
+  const [first, second] = startsOfAgent(id, 'a1');
+  assert.ok(second, 'it was woken in a second process');
+  assert.equal(second.args.resume, first.sessionId);
+  const firstExit = h.fakeLog({ event: 'exit' }).find((e) => e.pid === first.pid);
+  assert.ok(firstExit && firstExit.ts <= second.ts, 'the second process started only after the first had exited');
+  assert.equal(q.agents[0].status, 'done');
+  assert.match(q.agents[0].result, /^Woken: A message from the Archmage:\nOne more thing\./);
+  assert.ok(!q.log.some((e) => e.who === 'a1' && e.kind === 'failed'), 'the old exit did not fail the woken agent');
+  assert.equal(h.guild.running, 0);
+});
+
+// ── a handler that throws ──
+
+test('an error in an agent\'s result handler fails only that agent, and the quest carries on (bug 8)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-THROW', cwd: repo });
+  h.live(id).onAgentResult = async () => { throw new Error('boom'); };
+  const q = await h.waitQuest(id, 'done');
+  assert.equal(q.agents[0].status, 'failed');
+  assert.match(q.agents[0].result, /The Guild failed on its turn result: boom/);
+  assert.ok(messagesTo(id, /\[failed\] .* \(a1\) fell: the Guild failed on its turn result \(boom\)/).length >= 1);
+  assert.equal(h.guild.running, 0, 'its session was ended and its slot given back');
 });
 
 // ── nudges ──
