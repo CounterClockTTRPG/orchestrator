@@ -144,7 +144,7 @@ test('after: the dependent waits, starts once its prerequisite is done with its 
   const waiting = await h.waitAgent(id, 'a2', 'waiting');
   assert.match(waiting.activity, /^Waiting for /);
   assert.equal(h.starts().filter((s) => s.mcpServers.guild?.env.GUILD_QUEST_ID === id && s.mcpServers.guild.env.GUILD_AGENT_ID === 'a2').length, 0, 'the dependent has not been started');
-  assert.equal((await h.quest(id)).agents[0].status, 'working');
+  await h.waitAgent(id, 'a1', (a) => ['working', 'done'].includes(a.status)); // its worktree may still be in the making
 
   const q = await h.waitQuest(id, 'done');
   assert.deepEqual(q.agents.map((a) => a.status), ['done', 'done']);
