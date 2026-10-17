@@ -23,7 +23,7 @@ council live, with portraitgen portraits.
 | Interfaces | **REST + SSE** (the core; the UI uses it) and an **MCP server** for Claude Code sessions in other projects. |
 | Persistence | Several quests at once, all saved to disk and browsable after a restart. |
 | Guardrails | Max agents per quest (default 6), a model per role, a global concurrency cap (default 4 running agents; the rest queue). No cost budget, but cost is shown. |
-| Access | Binds `0.0.0.0` on the LAN, **no auth** (by choice; anyone on the network can start agents that edit files). |
+| Access | Binds `0.0.0.0` on the LAN. Other machines need a **token** (`~/.guild/token`, handed out as a `#token=` link and kept in a SameSite cookie). Same-machine requests are exempt, but every write must be JSON from the server's own origin, and the Host must be one of the server's names (CSRF and DNS rebinding). `/internal` takes a per-quest secret from loopback only. |
 | Hosting | Long-running service (`npm start` / systemd user unit). The MCP server auto-starts it when it isn't running. |
 | Layout | **Council table**: the Archmage at the top centre, the party in an arc below, glowing threads with a dispatch orb flying up on each report, the Dispatch scroll (all reports), and the Chronicle (final result). |
 

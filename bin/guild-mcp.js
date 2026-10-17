@@ -4,6 +4,7 @@
 //   claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
 //
 // GUILD_URL (http://127.0.0.1:7777) selects the server. If it is not running, this starts it.
+// GUILD_TOKEN is the server's access token; a server on this machine needs none.
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -16,6 +17,12 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const URL_ = process.env.GUILD_URL || `http://127.0.0.1:${process.env.GUILD_PORT || 7777}`;
 const HOME = process.env.GUILD_HOME || path.join(os.homedir(), '.guild');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A remote server needs its token (from its GUILD_HOME/token); a local one also accepts the local file.
+function token() {
+  if (process.env.GUILD_TOKEN) return process.env.GUILD_TOKEN;
+  try { return fs.readFileSync(path.join(HOME, 'token'), 'utf8').trim(); } catch { return undefined; }
+}
 
 async function up() {
   try { await api(URL_, 'GET', '/api/health', undefined, { timeoutMs: 1500 }); return true; } catch { return false; }
@@ -35,7 +42,11 @@ async function ensureServer() {
   throw new Error(`Could not start the guild server; see ${path.join(HOME, 'server.log')}`);
 }
 
-const call = async (method, p, b) => { await ensureServer(); return api(URL_, method, p, b); };
+const call = async (method, p, b) => {
+  await ensureServer();
+  const t = token();
+  return api(URL_, method, p, b, { headers: t ? { 'x-guild-token': t } : {} });
+};
 const browserUrl = (id) => `${URL_.replace('127.0.0.1', 'localhost')}/#/quest/${id}`;
 
 function status(q) {

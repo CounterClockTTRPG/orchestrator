@@ -22,18 +22,30 @@ final result. The browser shows the whole council live, with a procedurally gene
 ## Running it
 
 ```bash
-npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777, no auth)
+npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777; other machines need the token)
 ```
 
 | Variable | Default | |
 |---|---|---|
 | `GUILD_PORT` | `7777` | HTTP port |
 | `GUILD_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` to keep it off the LAN. |
+| `GUILD_TOKEN` | `GUILD_HOME/token` | Access token for other machines (made on first start). The MCP client sends it too. |
+| `GUILD_ALLOWED_HOSTS` | | Extra host names the server answers to (comma-separated), e.g. a DNS name pointing at it |
 | `GUILD_HOME` | `~/.guild` | Quests, settings, the role catalog, worktrees, server log |
 | `GUILD_CLAUDE_BIN` | `claude` | The Claude Code executable |
 
-> **No authentication.** Anyone who can reach the port can start agents, and in edit mode those agents run shell
-> commands. Bind to `127.0.0.1` if your network isn't trusted.
+**Access.** Agents run shell commands in edit mode, so the server guards its API.
+- **Token.** Requests from other machines need the token in `~/.guild/token`. At start the server prints a link for
+  each LAN address (`http://<ip>:7777/#token=…`). Open it once in each browser: the page keeps the token in a cookie
+  and removes it from the address bar. Clients send it as `x-guild-token`. Requests from the server's own machine
+  need no token.
+- **Same origin.** Writes must be JSON, and must not come from another web page (`Origin` check). The server answers
+  only to its own host names and addresses, which blocks DNS rebinding.
+- **Internal routes.** `/internal/*` is for the agents' MCP servers only: loopback, with a per-quest secret.
+- **Directories.** A quest on `/` or on your whole home directory is refused.
+
+The edit-mode shell itself is not sandboxed: an agent can do what you can, so post edit quests only on code you
+trust Claude Code with.
 
 To run it as a service, use a systemd user unit:
 
@@ -65,7 +77,8 @@ claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
 Tools: `start_quest(goal, cwd?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
 `list_quests()`, `message_quest(id, text, agentId?)` and `cancel_quest(id)`. `cwd` defaults to the session's project,
 and MCP quests default to automatic planning. If the server isn't running, the MCP server starts it in the background.
-Set `GUILD_URL` to use a server elsewhere; a remote server is never auto-started.
+Set `GUILD_URL` to use a server elsewhere, with `GUILD_TOKEN` set to that server's token. A remote server is never
+auto-started.
 
 ### Over HTTP
 

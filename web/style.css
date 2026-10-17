@@ -185,6 +185,9 @@ main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
 .badge.edit { color: var(--warn); border-color: #6b4a1a; }
 .badge.new { color: var(--arcane); border-color: var(--arcane-soft); }
 .empty { text-align: center; color: var(--muted); margin: 4rem auto; max-width: 520px; }
+.row.center { justify-content: center; }
+.row.tight > * { flex: none; }
+.token-gate input { width: 360px; }
 
 /* ── quest view ── */
 .quest-head { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 0.6rem; }

@@ -5,7 +5,7 @@
 #   GUILD_PORT=8080 bin/guild-start.sh
 #
 # Checks Node, makes sure the port is free, opens it in ufw if ufw is active (needs sudo),
-# prints the LAN URLs, then runs server.js in the foreground.
+# then runs server.js in the foreground; it prints the LAN links (with the access token).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,12 +47,8 @@ fi
 if [[ "$GUILD_HOST" == "127.0.0.1" || "$GUILD_HOST" == "localhost" ]]; then
   echo "warning: GUILD_HOST=$GUILD_HOST, so the server is only reachable from this machine" >&2
 else
-  echo "No authentication: anyone who can reach this port can start agents."
-  echo "Reachable at:"
-  for ip in $(hostname -I 2>/dev/null); do
-    [[ "$ip" == *:* ]] && continue   # skip IPv6
-    echo "  http://$ip:$GUILD_PORT/"
-  done
+  echo "Other machines need the access token: the server prints a link with it (…/#token=…) once it listens."
+  echo "Open that link once in each browser. The token is in ${GUILD_HOME:-$HOME/.guild}/token."
 fi
 
 cd "$ROOT"

@@ -17,6 +17,39 @@ const G = {
   q: null, es: null, cards: new Map(), threads: new Map(), logCount: 0, filter: 'all', planDraft: null, planKey: null,
 };
 
+// ───────────── access token ─────────────
+// From another machine the API needs the server's token. The link the server prints ends in #token=…;
+// the page keeps it in a SameSite cookie (sent with fetches, the event streams and file previews) and
+// drops it from the address bar.
+
+function keepToken(token) {
+  document.cookie = `guild_token=${encodeURIComponent(token)}; Path=/; SameSite=Strict; Max-Age=31536000`;
+}
+{
+  const m = location.hash.match(/(?:^#|[&/])token=([^&]+)/);
+  if (m) {
+    keepToken(decodeURIComponent(m[1]));
+    history.replaceState(null, '', `${location.pathname}#/`);
+  }
+}
+
+function showTokenGate(message) {
+  $('#view').innerHTML = `
+    <div class="empty token-gate">
+      <h2>${esc(W().brand)} needs its token</h2>
+      <p>${esc(message)}</p>
+      <form id="token-form" class="row tight center">
+        <input name="token" placeholder="Token" autocomplete="off" spellcheck="false" style="max-width:360px">
+        <button class="btn gold">Use it</button>
+      </form>
+    </div>`;
+  $('#token-form').onsubmit = (e) => {
+    e.preventDefault();
+    const t = e.target.token.value.trim();
+    if (t) { keepToken(t); location.reload(); }
+  };
+}
+
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -24,6 +57,7 @@ async function api(method, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) showTokenGate(data.error ?? 'Open the link the server printed at start.');
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data;
 }
@@ -59,6 +93,14 @@ function toast(msg) {
 
 function connectGlobal() {
   const es = new EventSource('/api/events');
+  // EventSource hides the status; ask once whether the failure is a missing token.
+  es.onerror = () => {
+    fetch('/api/state').then(async (r) => {
+      if (r.status !== 401) return;
+      es.close();
+      showTokenGate((await r.json().catch(() => ({}))).error ?? 'Open the link the server printed at start.');
+    }).catch(() => {});
+  };
   es.addEventListener('state', (e) => {
     const s = JSON.parse(e.data);
     G.settings = s.settings;
@@ -219,7 +261,7 @@ function buildQuest() {
         <div class="scroll">
           <h3>${esc(W().scroll)}</h3>
           <div class="filters">
-            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${{ all: 'Everything', reports: 'Reports', archmage: role(G.q.archmage?.role ?? 'archmage').title ?? 'Leader', you: 'You' }[f]}</button>`).join('')}
+            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${esc({ all: 'Everything', reports: 'Reports', archmage: role(G.q.archmage?.role ?? 'archmage').title ?? 'Leader', you: 'You' }[f])}</button>`).join('')}
           </div>
           <ol id="log"></ol>
         </div>

@@ -7,12 +7,19 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import { Guild } from './lib/guild.js';
+import { HOME } from './lib/store.js';
+import { loadToken, allowedHosts, hostName, isLoopback, sameSecret, refuseApi } from './lib/auth.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.GUILD_PORT) || 7777;
 const HOST = process.env.GUILD_HOST || '0.0.0.0';
 const guild = new Guild({ port: PORT });
+const TOKEN = loadToken(HOME);
+const HOSTS = allowedHosts();
+// The page and its scripts come from this server only; inline styles are used for layout.
+const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'";
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 const STATIC = { '/web/': path.join(ROOT, 'web'), '/vendor/': path.join(ROOT, 'vendor') };
@@ -27,6 +34,9 @@ const json = (res, status, data) => {
 };
 
 async function body(req) {
+  // JSON only: a web page can send text/plain across origins without asking, but not application/json.
+  const hasBody = Number(req.headers['content-length']) > 0 || !!req.headers['transfer-encoding'];
+  if (hasBody && !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'Send JSON (content-type: application/json)');
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
@@ -39,7 +49,10 @@ async function body(req) {
 function serveStatic(res, file) {
   fs.readFile(file, (err, data) => {
     if (err) return json(res, 404, { error: 'Not found' });
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+    res.writeHead(200, {
+      'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache',
+      'x-content-type-options': 'nosniff', ...(file.endsWith('.html') ? { 'content-security-policy': PAGE_CSP, 'x-frame-options': 'DENY' } : {}),
+    });
     res.end(data);
   });
 }
@@ -68,8 +81,8 @@ const API = {
     'With planning "review" the quest pauses at status "awaiting-approval" until POST /api/quests/:id/plan/approve.',
     'mode "edit" lets agents change files: each works on its own git worktree and branch, merged by the Archmage. cwd must be a git repo.',
   ],
-  mcp: 'From Claude Code: claude mcp add guild -e GUILD_URL=<this server> -- node <guild repo>/bin/guild-mcp.js',
-  auth: 'None. Anyone who can reach the port can start agents.',
+  mcp: 'From Claude Code: claude mcp add guild -e GUILD_URL=<this server> -e GUILD_TOKEN=<its token> -- node <guild repo>/bin/guild-mcp.js',
+  auth: 'Send the token as the x-guild-token header (or Authorization: Bearer). It is in GUILD_HOME/token on the server (default ~/.guild/token); requests from the server machine itself need none. Writes must be JSON and must not come from another origin.',
   endpoints: [
     ['POST', '/api/quests', '{ goal, cwd, mode: "read"|"edit", planning: "review"|"auto", maxAgents? } → quest state'],
     ['GET', '/api/quests', 'quest summaries'],
@@ -139,8 +152,9 @@ const routes = [
         'content-disposition': `${url.searchParams.has('download') ? 'attachment' : 'inline'}; filename="${f.name}"`,
         'x-content-type-options': 'nosniff',
         'cache-control': 'private, max-age=3600',
-        // Agent-made HTML and SVG run in an opaque origin, so their scripts cannot reach this API.
-        ...(/html|svg/.test(f.type) ? { 'content-security-policy': 'sandbox allow-scripts allow-popups' } : {}),
+        // Agent-made HTML and SVG run in an opaque origin and may not fetch or post anything, so their
+        // scripts cannot reach this API.
+        ...(/html|svg/.test(f.type) ? { 'content-security-policy': "sandbox allow-scripts allow-popups; connect-src 'none'; form-action 'none'" } : {}),
       });
       res.end(data);
     });
@@ -179,10 +193,22 @@ function need(text) {
   return String(text).trim();
 }
 
+/** The internal routes are for the agents' MCP servers: same machine, and the quest's own secret. */
+function refuseInternal(req, p) {
+  const q = guild.quests.get(p.split('/')[3]);
+  if (!isLoopback(req.socket.remoteAddress) || !q || !sameSecret(req.headers['x-guild-secret'], q.secret)) return [403, 'Forbidden'];
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = decodeURIComponent(url.pathname);
   try {
+    // A Host we don't know is a DNS-rebinding attempt (or a misconfiguration: see GUILD_ALLOWED_HOSTS).
+    if (!HOSTS.has(hostName(req.headers.host))) throw new HttpError(421, `Unknown host ${hostName(req.headers.host)}; add it to GUILD_ALLOWED_HOSTS`);
+    const open = ['/api', '/api/health', '/llms.txt'].includes(p);
+    const refused = p.startsWith('/internal/') ? refuseInternal(req, p) : p.startsWith('/api/') && !open ? refuseApi(req, { token: TOKEN }) : null;
+    if (refused) throw new HttpError(...refused);
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveStatic(res, path.join(ROOT, 'web', 'index.html'));
     for (const [prefix, dir] of Object.entries(STATIC)) {
       if (req.method === 'GET' && p.startsWith(prefix)) {
@@ -221,4 +247,9 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 server.requestTimeout = 0; // long-polls and SSE
 server.listen(PORT, HOST, () => {
   console.log(`Guild is open at http://localhost:${PORT}/ (listening on ${HOST}:${PORT})`);
+  if (!['127.0.0.1', 'localhost', '::1'].includes(HOST)) {
+    // Other machines need the token once; the page keeps it and drops it from the address bar.
+    const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
+    for (const ip of ips) console.log(`  from the network: http://${ip}:${PORT}/#token=${TOKEN}`);
+  }
 });
