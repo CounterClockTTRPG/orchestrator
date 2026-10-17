@@ -141,7 +141,8 @@ other Claude Code ─ MCP (bin/guild-mcp.js) ────┤                    
 ```
 
 - `server.js` and `lib/guild.js` own the quests, the agent processes, the global queue (`maxConcurrent` running agents
-  across all quests) and the event log. The two MCP servers (`lib/council-mcp.js`, `lib/report-mcp.js`) are tiny
+  across all quests) and the event log; a quest's parts are split over `lib/` by concern (see DESIGN.md, "Code
+  layout"). The two MCP servers (`lib/council-mcp.js`, `lib/report-mcp.js`) are tiny
   stdio processes that forward tool calls to the server's `/internal/…` routes.
 - **Timestamps** in the Dispatch scroll show the clock time and how long ago it was ("10 minutes ago").
 - **Reports** reach the UI at once. The Archmage gets routine progress in batches (every `batchSeconds`, default 60);

@@ -18,4 +18,4 @@ Guild works on itself here, so take care: the live server that runs your quest i
 - **Security.** Requests must name this server and come from its own origin, and bodies must be JSON
   (`lib/guard.js`). The API needs the token from other machines, and `/internal` needs the per-quest secret
   (`lib/auth.js`). New routes go through the same checks. New role fields must pass
-  `cleanRole` in `lib/guild.js`.
+  `cleanRole` in `lib/roles.js`.
