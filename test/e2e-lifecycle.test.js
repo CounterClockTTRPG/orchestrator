@@ -47,6 +47,7 @@ const sessions = [
   // ── starting and waking (bugs 2 and 6) ──
   // The test recalls the agent, or ends the quest, while its worktree is being made; the Archmage only waits.
   { match: { archmage: true, message: 'GOAL-START-CANCEL' }, steps: [{ sleep: 300 }, plan('TASK-START'), { result: 'Proposed.' }, { wait: 'never' }] },
+  { match: { archmage: true, message: 'GOAL-START-STOP' }, steps: [{ sleep: 300 }, plan('TASK-START'), { result: 'Proposed.' }, { wait: 'never' }] },
   { match: { archmage: true, message: 'GOAL-START-END' }, steps: [{ sleep: 300 }, plan('TASK-START'), { result: 'Proposed.' }, { wait: 'never' }] },
   { match: { role: 'Scout', task: 'TASK-START' }, steps: [{ result: 'Should never have started.' }] },
   // The agent's process lingers after its final report, and the human wakes it meanwhile.
@@ -209,6 +210,21 @@ test('an agent being set up when the quest ends does not start (bug 2)', async (
   assert.equal(s.agents[0].status, 'cancelled');
   assert.equal(startsOfAgent(id, 'a1').length, 0, 'no session was started');
   assert.equal(h.guild.running, 0, 'its slot is free again');
+});
+
+test('an agent being set up when the server starts stopping does not start (bug 2)', async () => {
+  const { id } = await h.createQuest({ goal: 'GOAL-START-STOP', cwd: repo, mode: 'edit' });
+  const q = h.live(id);
+  q.startHook = () => { h.guild.stopping = true; };
+  try {
+    await h.waitFor(() => (q.s.log.some((e) => /did not set out: the server is stopping/.test(e.text)) ? true : null), { what: 'the start to be called off' });
+  } finally {
+    h.guild.stopping = false;
+  }
+  assert.equal(startsOfAgent(id, 'a1').length, 0, 'no session was started');
+  assert.equal(h.guild.running, 0, 'its slot is free again');
+  await h.post(`/api/quests/${id}/cancel`);
+  await settled(id);
 });
 
 test('an agent woken while its last process is still closing waits for it, and that exit does not fail it (bug 6)', async () => {
