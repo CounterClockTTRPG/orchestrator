@@ -9,6 +9,9 @@ final result. The browser shows the whole council live, with a procedurally gene
   nothing to install: no npm dependencies, Node ≥ 20.
 - **Read-only or edit quests:** in edit mode each agent works in its own git worktree and branch. The Archmage merges
   them into `guild/<quest>/party` and resolves conflicts. You review that branch; your checkout is never touched.
+- **Applications:** group the quests on one system. An application names one or more directories (say a backend
+  and its client), standing context for the Archmage, and quest defaults. A quest on it works on all its directories,
+  and the Archmage is briefed with the chronicles of earlier quests on it. See [Applications](#applications).
 - **Reviewed or automatic planning:** review the proposed party and its tasks in the browser (edit, add, remove) before
   dispatch, or let it go at once.
 - **Task dependencies:** the plan is a graph. A member can wait for others (`after`); it starts by itself once they
@@ -36,20 +39,31 @@ final result. The browser shows the whole council live, with a procedurally gene
 ## Running it
 
 ```bash
-npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777, no auth)
+npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777; other machines need the token)
 ```
 
 | Variable | Default | |
 |---|---|---|
 | `GUILD_PORT` | `7777` | HTTP port |
 | `GUILD_HOST` | `0.0.0.0` | Bind address. Use `127.0.0.1` to keep it off the LAN. |
+| `GUILD_TOKEN` | `GUILD_HOME/token` | Access token for other machines (made on first start). The MCP client sends it too. |
+| `GUILD_ALLOWED_HOSTS` | | Extra host names the server answers to (comma-separated), e.g. a DNS name pointing at it |
 | `GUILD_HOME` | `~/.guild` | Quests, settings, the role catalog, worktrees, server log |
 | `GUILD_CLAUDE_BIN` | `claude` | The Claude Code executable |
 | `GUILD_ALLOWED_HOSTS` | | Extra host names the server answers to, comma-separated (e.g. a reverse proxy's). Its own name, `localhost` and its IP addresses are always allowed. |
 
-> **No authentication.** Anyone who can reach the port can start agents, and in edit mode those agents run shell
-> commands. Bind to `127.0.0.1` if your network isn't trusted. Other web pages can't drive it from your browser: the
-> server only answers to its own host names, refuses cross-site `Origin`s, and takes JSON bodies only.
+**Access.** Agents run shell commands in edit mode, so the server guards its API.
+- **Token.** Requests from other machines need the token in `~/.guild/token`. At start the server prints a link for
+  each LAN address (`http://<ip>:7777/#token=…`). Open it once in each browser: the page keeps the token in a cookie
+  and removes it from the address bar. Clients send it as `x-guild-token`. Requests from the server's own machine
+  need no token.
+- **Same origin.** Writes must be JSON, and must not come from another web page (`Origin` check). The server answers
+  only to its own host names and addresses, which blocks DNS rebinding.
+- **Internal routes.** `/internal/*` is for the agents' MCP servers only: loopback, with a per-quest secret.
+- **Directories.** A quest on `/` or on your whole home directory is refused.
+
+The edit-mode shell itself is not sandboxed: an agent can do what you can, so post edit quests only on code you
+trust Claude Code with.
 
 To run it as a service, use a systemd user unit:
 
@@ -78,11 +92,13 @@ systemctl --user daemon-reload && systemctl --user enable --now guild
 claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
 ```
 
-Tools: `start_quest(goal, cwd?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
-`list_quests()`, `message_quest(id, text, agentId?)`, `resume_quest(id)`, `deliver_quest(id)` and `cancel_quest(id)`.
-`start_quest` also takes `target`, `sync`, `deliver` and `checkIn`. `cwd` defaults to the session's project,
-and MCP quests default to automatic planning. If the server isn't running, the MCP server starts it in the background.
-Set `GUILD_URL` to use a server elsewhere; a remote server is never auto-started.
+Tools: `start_quest(goal, cwd?, app?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
+`list_quests()`, `list_applications()`, `message_quest(id, text, agentId?)`, `resume_quest(id)`, `deliver_quest(id)` and
+`cancel_quest(id)`. `start_quest` also takes `target`, `sync`, `deliver` and `checkIn`. `cwd` defaults to the session's
+project. If `app` is omitted and `cwd` lies in exactly one application, the quest runs on that application
+(`app: "none"` opts out). MCP quests default to automatic planning unless the application sets it. If the server isn't
+running, the MCP server starts it in the background. Set `GUILD_URL` to use a server elsewhere, with `GUILD_TOKEN` set
+to that server's token. A remote server is never auto-started.
 
 ### Over HTTP
 
@@ -98,8 +114,8 @@ curl -s localhost:7777/api/quests/<id>               # full state, including the
 
 | Method | Path | |
 |---|---|---|
-| POST | `/api/quests` | `{ goal, cwd, mode: "read"\|"edit", planning: "review"\|"auto", maxAgents?, target?, sync?, deliver?: "offer"\|"auto", checkIn? }` |
-| POST | `/api/quests/:id/deliver` | fast-forward the target branch to a finished edit quest's result |
+| POST | `/api/quests` | `{ goal, cwd?, app?, mode?: "read"\|"edit", planning?: "review"\|"auto", maxAgents?, target?, sync?, deliver?: "offer"\|"auto", checkIn? }` |
+| POST | `/api/quests/:id/deliver` | fast-forward the target branch (each repository's, on an application) to a finished edit quest's result |
 | GET | `/api/quests`, `/api/quests/:id` | list / full state |
 | GET | `/api/quests/:id/events` | SSE: `snapshot`, then `quest`, `archmage`, `agent`, `activity`, `log`, `report`, `plan`, `roles`, `chronicle` |
 | GET | `/api/events` | SSE: `state`, then `summary` (one per quest change), `settings`, `roles` |
@@ -107,6 +123,9 @@ curl -s localhost:7777/api/quests/<id>               # full state, including the
 | POST | `/api/quests/:id/message` | `{ text }` to the Archmage |
 | POST | `/api/quests/:id/cancel` | abandon the quest |
 | POST | `/api/quests/:id/resume` | carry on with a quest a server restart *interrupted* |
+| PUT | `/api/quests/:id/app` | `{ app: id\|null }`, file the quest under an application |
+| GET/POST | `/api/applications` | list / create `{ name, repos: [path \| { name, path }], description?, context?, defaults? }` |
+| GET/PUT/DELETE | `/api/applications/:aid` | one application with its quests / update / delete (its quests stay) |
 | POST | `/api/quests/:id/agents/:aid/message` · `/answer` · `/cancel` | `{ text }` |
 | POST | `/api/quests/:id/agents/:aid/start` | start a *waiting* agent now, without the rest of its prerequisites |
 | GET/PUT | `/api/roles` · POST `/api/roles/:id` | the role catalog; save an invented role with `{ quest }` |
@@ -140,6 +159,46 @@ other Claude Code ─ MCP (bin/guild-mcp.js) ────┤                    
 - **Running time** is shown for the quest and every agent (wall-clock time, less any time the server was down).
 
 See [DESIGN.md](DESIGN.md) for the decisions behind it.
+
+## Applications
+
+An application is a level above quests: one system, possibly spread over several repositories.
+
+```bash
+curl -s localhost:7777/api/applications -H 'content-type: application/json' -d '{
+  "name": "TTRPG platform", "description": "Campaign system and its map backend",
+  "repos": ["/home/me/ttrpg2", "/home/me/dungml"],
+  "context": "ttrpg2 calls dungml over HTTP (/api/dsl/render, /maps/…). Never change those routes without checking ttrpg2.",
+  "defaults": { "planning": "auto" } }'
+```
+
+- **Directories.** A quest on an application may work in all of its directories. Its `cwd` (optional, inside one of
+  them) is where the Archmage starts. In read-only mode the others are added with `--add-dir`.
+- **Edit mode on several repositories.** Each agent gets a workspace `~/.guild/worktrees/<quest>/<agent>/` holding one
+  worktree per repository (`ttrpg2/`, `dungml/`), all on branch `guild/<quest>/<agent>`. The Archmage's integration
+  workspace is the same shape. `merge_party` merges repository by repository, and the result is
+  `guild/<quest>/party` in each repository. With a single repository nothing changes.
+- **Briefing.** The Archmage is told the application's description, its directories, and the last twelve finished
+  quests on it, each with the path of its chronicle (`~/.guild/quests/<id>/chronicle.md`). For an edit quest the
+  line also says whether its branch has reached your checkout, so an unmerged chronicle isn't taken as fact.
+- **Standing context.** The application's context, plus a `GUILD.md` at the top of any of its directories (notes
+  that are versioned with the code), goes to the Archmage and to every agent. Quests on a plain directory read its
+  `GUILD.md` too.
+- **Defaults.** `mode`, `planning` and `maxAgents` that a quest doesn't set come from the application, then from
+  the global settings.
+- **Grouping.** The hall lists applications, then the quests that belong to none. A new application can adopt the
+  existing quests on its directories (`adopt: true`, a checkbox in the UI). A quest can be moved to another
+  application, or to none, from its page or with `PUT /api/quests/:id/app`. That changes only the grouping (and
+  later briefings), not the directories of a running quest.
+
+Applications are stored in `~/.guild/applications.json`.
+
+### Merging
+
+Git decides what is merged: an agent's work counts as merged when its branch is contained in the quest branch. An
+agent woken after its merge that commits again is merged again, and `finish_quest` refuses while any finished
+agent has unmerged commits. To drop work on purpose (say, after `git merge --abort` on a conflict), the Archmage
+calls `merge_party` with `leaveOut: [agentId]`, and should say why in the chronicle.
 
 ## Roles
 

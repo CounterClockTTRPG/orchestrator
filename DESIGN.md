@@ -16,6 +16,7 @@ council live, with portraitgen portraits.
 | Party shape | **Flat**: only the Archmage recruits. Subagents have the built-in Task/Agent tool disabled. The plan is a **dependency graph**: a member may wait for others (`after`) and starts by itself when they are done. |
 | Edit output | Agents commit on `guild/<quest>/<agent>`. The Archmage merges them into `guild/<quest>/party` and resolves conflicts. The quest then **stops for your review**; nothing touches your main branch. |
 | Non-git dir | Edit mode is refused. Read-only works anywhere. |
+| Applications | An optional, **explicit** level above quests: a named set of directories (one system across repos), standing context, quest defaults. Not inferred from paths in the core, because one system often spans several repos; only the MCP client picks the application that contains `cwd` as a convenience. Quests on an application see all its directories, and edit mode gives one worktree per repo inside each agent's workspace, merged per repo. Earlier chronicles reach the Archmage as file paths in its briefing (not inlined), so it reads only the ones that matter. |
 | Browser controls | Cancel an agent or the quest, message a running agent, answer a blocked agent (your answer wins over the Archmage's). |
 | Roles | `roles.json` catalog (look, prompt, tools, model). The planner may **invent** a role; it gets a derived look and the UI offers *Save to catalog*. |
 | Look | Same race, outfit, colours and props per role; **distinct face and name** per agent (seeded by agent name). |
@@ -23,7 +24,7 @@ council live, with portraitgen portraits.
 | Interfaces | **REST + SSE** (the core; the UI uses it) and an **MCP server** for Claude Code sessions in other projects. |
 | Persistence | Several quests at once, all saved to disk and browsable after a restart. |
 | Guardrails | Max agents per quest (default 6), a model per role, a global concurrency cap (default 4 running agents; the rest queue). No cost budget, but cost is shown. |
-| Access | Binds `0.0.0.0` on the LAN, **no auth** (by choice; anyone on the network can start agents that edit files). Requests must name the server in `Host` (against DNS rebinding), a browser `Origin` must be the server itself, and bodies must be `application/json`, so other web pages cannot drive it. |
+| Access | Binds `0.0.0.0` on the LAN. Other machines need a **token** (`~/.guild/token`, handed out as a `#token=` link and kept in a SameSite cookie). Same-machine requests are exempt, but every write must be JSON from the server's own origin, and the Host must be one of the server's names (CSRF and DNS rebinding). `/internal` takes a per-quest secret from loopback only. |
 | Hosting | Long-running service (`npm start` / systemd user unit). The MCP server auto-starts it when it isn't running. |
 | Layout | **Council table**: the Archmage at the top centre, the party in an arc below, glowing threads with a dispatch orb flying up on each report, the Dispatch scroll (all reports), and the Chronicle (final result). |
 

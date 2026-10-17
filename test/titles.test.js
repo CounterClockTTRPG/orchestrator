@@ -33,7 +33,7 @@ test('a member without a title gets one from its task; an agent never shows its 
   assert.equal(agentTitle({ title: 'Smith', task: 'Fix the login bug.' }), 'Fix the login bug');
 });
 
-test('plan titles reach the agents, the party report and the quest summary', () => {
+test('plan titles reach the agents, the party report and the quest summary', async () => {
   fs.mkdirSync(store.questDir('t1'), { recursive: true });
   const q = new Quest(new Guild({ port: 0 }), {
     id: 't1', goal: 'g', status: 'planning', planning: 'auto', mode: 'read', theme: 'fantasy', maxAgents: 6,
@@ -43,7 +43,7 @@ test('plan titles reach the agents, the party report and the quest summary', () 
   q.proposePlan({ summary: 's', agents: [{ role: 'auditor', title: 'Audit auth', task: 'Audit lib/auth.' }, { role: 'scribe', task: 'Write the docs.' }] });
   assert.deepEqual(q.s.plan.agents.map((m) => m.title), ['Audit auth', 'Write the docs']);
   assert.deepEqual(q.s.agents.map((a) => a.taskTitle), ['Audit auth', 'Write the docs']);
-  assert.match(q.partyReport(), /“Audit auth”/);
+  assert.match(await q.partyReport(), /“Audit auth”/);
   q.council('recruit_agent', { role: 'tester', title: 'Test the fix', task: 'Test it.' });
   assert.equal(q.s.agents[2].taskTitle, 'Test the fix');
   assert.deepEqual(q.summary().party.map((a) => a.taskTitle), ['Audit auth', 'Write the docs', 'Test the fix']);

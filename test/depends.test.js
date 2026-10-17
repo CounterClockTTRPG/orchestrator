@@ -71,7 +71,7 @@ test('members with after wait, and start with the reports once their prerequisit
   assert.deepEqual(started, ['a1', 'a3']);
   assert.deepEqual([fix.status, tests.status], ['waiting', 'waiting']);
   assert.deepEqual(tests.after, ['a2', 'a1']);
-  assert.match(q.partyReport(), /after: a2 \(waiting\), a1 \(queued\)/);
+  assert.match(await q.partyReport(), /after: a2 \(waiting\), a1 \(queued\)/);
 
   q.updateAgent(audit, { status: 'done', result: 'Found two bugs in auth.js:12.' });
   await flush();

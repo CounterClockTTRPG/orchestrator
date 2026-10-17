@@ -102,7 +102,7 @@ test('outside work is merged in before finishing, then the result can fast-forwa
 test('a target that moves after the last merge is reported, not forced', async () => {
   const dir = await repo();
   const { q, integrationDir } = await editQuest('i2', dir, []);
-  q.s.repo.deliver = 'auto';
+  q.s.repos[0].deliver = 'auto';
   fs.writeFileSync(path.join(integrationDir, 'a.txt'), 'party\n');
   await commitAll(integrationDir, 'party');
   fs.writeFileSync(path.join(dir, 'c.txt'), 'late outside work\n');
@@ -122,14 +122,14 @@ test('quest creation checks the target and defaults it to the branch checked out
     await assert.rejects(g.createQuest({ goal: 'g', cwd: dir, mode: 'edit', target: 'nope' }), /no branch "nope"/);
     await assert.rejects(g.createQuest({ goal: 'g', cwd: dir, mode: 'edit', sync: 'missing' }), /no branch or ref "missing"/);
     const q = await g.createQuest({ goal: 'g', cwd: dir, mode: 'edit', sync: 'main' });
-    assert.equal(q.s.repo.target, 'main');
-    assert.deepEqual(q.s.repo.sync, ['main']);
+    assert.equal(q.s.repos[0].target, 'main');
+    assert.deepEqual(q.s.repos[0].sync, ['main']);
     assert.equal(q.s.checkIn, g.settings.checkIn);
     await G.git(dir, 'branch', 'feature');
     fs.writeFileSync(path.join(dir, 'a.txt'), 'only on main\n');
     await commitAll(dir, 'main only');
     const f = await g.createQuest({ goal: 'g', cwd: dir, mode: 'edit', target: 'feature', checkIn: '' });
-    assert.equal(f.s.repo.base, await G.resolve(dir, 'feature'), 'the party starts from the target');
+    assert.equal(f.s.repos[0].base, await G.resolve(dir, 'feature'), 'the party starts from the target');
     assert.equal(f.s.checkIn, '');
   } finally {
     Quest.prototype.begin = begin;

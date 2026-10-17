@@ -1,4 +1,4 @@
-// Guild web UI: the hall of quests and the live council table.
+// Guild web UI: the hall of applications and quests, and the live council table.
 
 import { setPortrait, setPortraitTheme, setPortraitMotion, motionFor, STYLES } from './portraits.js';
 import { markdown, esc } from './markdown.js';
@@ -15,9 +15,42 @@ const questWord = (st) => W().questStatus[st] ?? st;
 const agentWord = (st) => W().agentStatus[st] ?? st;
 
 const G = {
-  settings: {}, roles: {}, quests: new Map(),
+  settings: {}, roles: {}, apps: new Map(), quests: new Map(),
   q: null, es: null, cards: new Map(), threads: new Map(), logCount: 0, filter: 'all', planDraft: null, planKey: null,
 };
+
+// ───────────── access token ─────────────
+// From another machine the API needs the server's token. The link the server prints ends in #token=…;
+// the page keeps it in a SameSite cookie (sent with fetches, the event streams and file previews) and
+// drops it from the address bar.
+
+function keepToken(token) {
+  document.cookie = `guild_token=${encodeURIComponent(token)}; Path=/; SameSite=Strict; Max-Age=31536000`;
+}
+{
+  const m = location.hash.match(/(?:^#|[&/])token=([^&]+)/);
+  if (m) {
+    keepToken(decodeURIComponent(m[1]));
+    history.replaceState(null, '', `${location.pathname}#/`);
+  }
+}
+
+function showTokenGate(message) {
+  $('#view').innerHTML = `
+    <div class="empty token-gate">
+      <h2>${esc(W().brand)} needs its token</h2>
+      <p>${esc(message)}</p>
+      <form id="token-form" class="row tight center">
+        <input name="token" placeholder="Token" autocomplete="off" spellcheck="false" style="max-width:360px">
+        <button class="btn gold">Use it</button>
+      </form>
+    </div>`;
+  $('#token-form').onsubmit = (e) => {
+    e.preventDefault();
+    const t = e.target.token.value.trim();
+    if (t) { keepToken(t); location.reload(); }
+  };
+}
 
 async function api(method, path, body) {
   const res = await fetch(path, {
@@ -26,6 +59,7 @@ async function api(method, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) showTokenGate(data.error ?? 'Open the link the server printed at start.');
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data;
 }
@@ -88,11 +122,20 @@ function toast(msg) {
 
 function connectGlobal() {
   const es = new EventSource('/api/events');
+  // EventSource hides the status; ask once whether the failure is a missing token.
+  es.onerror = () => {
+    fetch('/api/state').then(async (r) => {
+      if (r.status !== 401) return;
+      es.close();
+      showTokenGate((await r.json().catch(() => ({}))).error ?? 'Open the link the server printed at start.');
+    }).catch(() => {});
+  };
   es.addEventListener('state', (e) => {
     const s = JSON.parse(e.data);
     G.settings = s.settings;
     G.roles = s.roles;
     applyTheme();
+    G.apps = new Map((s.apps ?? []).map((a) => [a.id, a]));
     G.quests = new Map(s.quests.map((q) => [q.id, q]));
     renderTabs();
     route();
@@ -101,7 +144,11 @@ function connectGlobal() {
     const { quest } = JSON.parse(e.data);
     G.quests.set(quest.id, quest);
     renderTabs();
-    if (!G.q && !location.hash.startsWith('#/quest/')) renderHall();
+    if (!G.q && !location.hash.startsWith('#/quest/')) renderHome();
+  });
+  es.addEventListener('apps', (e) => {
+    G.apps = new Map(JSON.parse(e.data).apps.map((a) => [a.id, a]));
+    if (G.q) renderHead(); else if (!location.hash.startsWith('#/quest/')) renderHome();
   });
   es.addEventListener('settings', (e) => {
     const { theme: before, animate } = G.settings;
@@ -127,7 +174,13 @@ function renderTabs() {
 
 function route() {
   const m = location.hash.match(/^#\/quest\/([\w-]+)/);
-  if (m) { if (G.q?.id !== m[1]) openQuest(m[1]); } else { closeQuest(); renderHall(); }
+  if (m) { if (G.q?.id !== m[1]) openQuest(m[1]); } else { closeQuest(); renderHome(); }
+}
+
+/** The hall, or an application's page. */
+function renderHome() {
+  const m = location.hash.match(/^#\/app\/([\w-]+)/);
+  if (m) renderApp(m[1]); else renderHall();
 }
 window.addEventListener('hashchange', route);
 
@@ -141,29 +194,40 @@ function closeQuest() {
 
 // ───────────── the hall ─────────────
 
-function renderHall() {
-  const list = [...G.quests.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const ar = archRole();
-  $('#view').innerHTML = `
-    <div class="hall-head">
-      <h1>${esc(W().hallTitle)}</h1>
-      <p>${esc(W().hallLead)}</p>
-      <button class="btn gold" data-new>${esc(W().post)}</button>
-    </div>
-    ${list.length ? `<div class="quest-grid">${list.map((q) => `
-      <a class="quest-card" href="#/quest/${q.id}">
-        <div class="meta"><span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
-          ${q.mode === 'edit' ? '<span class="badge edit">edit</span>' : '<span class="badge">read-only</span>'}
-          <span>${when(q.createdAt)}</span><span>${money(q.costUsd)}</span><span>${duration(questElapsed(q))}</span></div>
-        <div class="goal">${esc(q.goal)}</div>
-        <div class="meta"><code>${esc(q.cwd)}</code></div>
-        <div class="mini-party" data-quest="${q.id}"></div>
-      </a>`).join('')}</div>`
-      : `<div class="empty"><div class="mini" style="width:160px;height:160px;margin:0 auto 1rem;border-radius:50%;overflow:hidden" id="hall-arch"></div>
-         <p>${esc(W().hallEmpty)}</p></div>`}`;
-  $('[data-new]', $('#view')).onclick = openNewQuest;
-  const ha = $('#hall-arch');
-  if (ha) setPortrait(ha, { seed: ar.name ?? 'Velothar', role: ar, status: 'waiting', style: style(), size: 200 });
+const byNewest = (a, b) => b.createdAt.localeCompare(a.createdAt);
+
+function questCard(q, { showApp = true } = {}) {
+  const app = q.app && G.apps.get(q.app);
+  const where = showApp && app ? `<span class="badge app">${esc(app.name)}</span>` : '';
+  return `
+    <a class="quest-card" href="#/quest/${q.id}">
+      <div class="meta"><span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
+        ${q.mode === 'edit' ? '<span class="badge edit">edit</span>' : '<span class="badge">read-only</span>'}
+        <span>${when(q.createdAt)}</span><span>${money(q.costUsd)}</span><span>${duration(questElapsed(q))}</span></div>
+      <div class="goal">${esc(q.goal)}</div>
+      <div class="meta">${where}<code>${esc(q.cwd)}</code></div>
+      <div class="mini-party" data-quest="${q.id}"></div>
+    </a>`;
+}
+
+function appCard(app) {
+  const qs = [...G.quests.values()].filter((q) => q.app === app.id).sort(byNewest);
+  const active = qs.filter((q) => ACTIVE.has(q.status)).length;
+  const cost = qs.reduce((n, q) => n + (q.costUsd ?? 0), 0);
+  return `
+    <a class="quest-card app-card" href="#/app/${app.id}">
+      <div class="title">${esc(app.name)}</div>
+      ${app.description ? `<div class="desc">${esc(app.description)}</div>` : ''}
+      <div class="meta">${app.repos.map((r) => `<code title="${esc(r.path)}">${esc(r.name)}</code>`).join('')}</div>
+      <div class="meta">
+        ${active ? `<span><span class="dot questing"></span> ${active} ${esc(questWord('questing').toLowerCase())}</span>` : ''}
+        <span>${qs.length} ${qs.length === 1 ? 'quest' : 'quests'}</span><span>${money(cost)}</span>
+        ${qs[0] ? `<span>last ${when(qs[0].createdAt)}</span>` : ''}
+      </div>
+    </a>`;
+}
+
+function paintMiniParties() {
   for (const el of document.querySelectorAll('.mini-party')) {
     const q = G.quests.get(el.dataset.quest);
     for (const a of q.party.slice(0, 10)) {
@@ -174,6 +238,73 @@ function renderHall() {
       setPortrait(d, { seed: a.name, role: role(a.role, null), status: a.status, style: 'illustrated', size: 64, presentation: pres(a, q) });
     }
   }
+}
+
+function renderHall() {
+  const apps = [...G.apps.values()];
+  const loose = [...G.quests.values()].filter((q) => !q.app || !G.apps.has(q.app)).sort(byNewest);
+  const ar = archRole();
+  $('#view').innerHTML = `
+    <div class="hall-head">
+      <h1>${esc(W().hallTitle)}</h1>
+      <p>${esc(W().hallLead)}</p>
+      <div class="row center tight">
+        <button class="btn gold" data-new>${esc(W().post)}</button>
+        <button class="btn" data-new-app>${esc(W().newApp)}</button>
+      </div>
+    </div>
+    ${apps.length ? `<h2 class="section-title">${esc(W().apps)}</h2><div class="quest-grid">${apps.map(appCard).join('')}</div>` : ''}
+    ${apps.length && loose.length ? `<h2 class="section-title">${esc(W().otherQuests)}</h2>` : ''}
+    ${loose.length ? `<div class="quest-grid">${loose.map((q) => questCard(q)).join('')}</div>`
+      : apps.length ? '' : `<div class="empty"><div class="mini" style="width:160px;height:160px;margin:0 auto 1rem;border-radius:50%;overflow:hidden" id="hall-arch"></div>
+         <p>${esc(W().hallEmpty)}</p></div>`}`;
+  $('[data-new]', $('#view')).onclick = () => openNewQuest();
+  $('[data-new-app]', $('#view')).onclick = () => openAppDialog();
+  const ha = $('#hall-arch');
+  if (ha) setPortrait(ha, { seed: ar.name ?? 'Velothar', role: ar, status: 'waiting', style: style(), size: 200 });
+  paintMiniParties();
+}
+
+// ───────────── an application ─────────────
+
+function renderApp(id) {
+  const app = G.apps.get(id);
+  if (!app) { $('#view').innerHTML = `<div class="empty">No such ${esc(W().app.toLowerCase())}. <a href="#/">Back to the hall</a></div>`; return; }
+  const qs = [...G.quests.values()].filter((q) => q.app === id).sort(byNewest);
+  const cost = qs.reduce((n, q) => n + (q.costUsd ?? 0), 0);
+  const d = app.defaults ?? {};
+  const defaults = [d.mode && (d.mode === 'edit' ? 'edit mode' : 'read-only'), d.planning && (d.planning === 'review' ? 'reviewed plan' : 'automatic plan'), d.maxAgents && `${d.maxAgents} ${W().inParty}`].filter(Boolean);
+  $('#view').innerHTML = `
+    <section class="app-page">
+      <div class="quest-head">
+        <div>
+          <p class="crumbs"><a href="#/">${esc(W().hallTitle)}</a> › ${esc(W().app)}</p>
+          <h1 class="app-name">${esc(app.name)}</h1>
+          ${app.description ? `<p class="muted">${esc(app.description)}</p>` : ''}
+          <div class="meta">
+            ${app.repos.map((r) => `<span><b>${esc(r.name)}</b> <code>${esc(r.path)}</code></span>`).join('')}
+          </div>
+          <div class="meta">
+            <span>${qs.length} ${qs.length === 1 ? 'quest' : 'quests'}</span><span>${money(cost)}</span>
+            ${defaults.map((x) => `<span class="badge">${esc(x)}</span>`).join('')}
+          </div>
+        </div>
+        <div class="row tight" style="flex:none">
+          <button class="btn gold" data-new>${esc(W().post)}</button>
+          <button class="btn" data-edit>Edit</button>
+          <button class="btn danger" data-delete>Delete</button>
+        </div>
+      </div>
+      ${app.context ? `<details class="app-context"><summary>Standing context</summary><div class="md">${markdown(app.context)}</div></details>` : ''}
+      ${qs.length ? `<div class="quest-grid">${qs.map((q) => questCard(q, { showApp: false })).join('')}</div>` : `<div class="empty"><p>${esc(W().appEmpty)}</p></div>`}
+    </section>`;
+  $('[data-new]').onclick = () => openNewQuest(id);
+  $('[data-edit]').onclick = () => openAppDialog(app);
+  $('[data-delete]').onclick = () => {
+    if (!confirm(`Delete ${app.name}? Its quests stay, outside any ${W().app.toLowerCase()}.`)) return;
+    api('DELETE', `/api/applications/${id}`).then(() => { location.hash = '#/'; }).catch((e) => toast(e.message));
+  };
+  paintMiniParties();
 }
 
 // ───────────── a quest ─────────────
@@ -210,9 +341,10 @@ function openQuest(id) {
     renderArchmage();
   });
   es.addEventListener('report', (e) => { const d = JSON.parse(e.data); sendOrb(d.agentId, 'up'); if (d.phase !== 'blocked') speak(d.agentId, d.message); });
+  es.addEventListener('app', (e) => { G.q.app = JSON.parse(e.data).app; renderHead(); });
   es.addEventListener('plan', (e) => { const d = JSON.parse(e.data); G.q.plan = d.plan; G.q.roles = d.roles; renderPlan(); });
   es.addEventListener('roles', (e) => { G.q.roles = JSON.parse(e.data).roles; renderParty(); });
-  es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diff = d.diff; G.q.delivery = d.delivery; renderChronicle(); });
+  es.addEventListener('chronicle', (e) => { const d = JSON.parse(e.data); G.q.chronicle = d.chronicle; G.q.diffs = d.diffs; G.q.delivery = d.delivery; renderChronicle(); });
   es.onerror = () => { if (!G.q) $('#view').innerHTML = `<div class="empty">${esc(W().notFound)}</div>`; };
 }
 
@@ -253,7 +385,7 @@ function buildQuest() {
         <div class="scroll">
           <h3>${esc(W().scroll)}</h3>
           <div class="filters">
-            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${{ all: 'Everything', reports: 'Reports', archmage: role(G.q.archmage?.role ?? 'archmage').title ?? 'Leader', you: 'You' }[f]}</button>`).join('')}
+            ${['all', 'reports', 'archmage', 'you'].map((f) => `<button class="btn small ${G.filter === f ? 'gold' : 'ghost'}" data-filter="${f}">${esc({ all: 'Everything', reports: 'Reports', archmage: role(G.q.archmage?.role ?? 'archmage').title ?? 'Leader', you: 'You' }[f])}</button>`).join('')}
           </div>
           <ol id="log"></ol>
         </div>
@@ -291,19 +423,26 @@ function buildQuest() {
 function renderHead() {
   const q = G.q;
   if (!q || !$('#q-head')) return;
+  // Agent events re-render the head often; don't pull the application list from under the human.
+  if (document.activeElement?.matches?.('[data-file-under]')) return;
   const active = ACTIVE.has(q.status);
   const working = q.agents.filter((a) => a.status === 'working' || a.status === 'blocked').length;
   const total = (q.archmage?.costUsd ?? 0) + q.agents.reduce((n, a) => n + (a.costUsd ?? 0), 0);
+  const app = q.app && G.apps.get(q.app);
+  const branch = q.repos?.[0]?.branch ?? q.repo?.branch;
+  const target = q.repos?.length > 1 ? null : q.repos?.[0]?.target ?? q.repo?.target;
+  const dirs = q.dirs?.length > 1 ? q.dirs.map((d) => `<code title="${esc(d.path)}">${esc(d.name)}</code>`).join('') : `<code>${esc(q.cwd)}</code>`;
   $('#q-head').innerHTML = `
     <div>
+      ${app ? `<p class="crumbs"><a href="#/app/${app.id}">${esc(app.name)}</a></p>` : ''}
       <p class="goal ${G.goalOpen ? 'open' : ''}">${esc(q.goal)}</p>
       <button class="goal-more hidden" type="button">${G.goalOpen ? 'Show less' : esc(W().fullGoal)}</button>
       <div class="meta">
         <span class="dot ${q.status}"></span><span class="status-word">${questWord(q.status)}</span>
         ${q.mode === 'edit' ? '<span class="badge edit">edit mode</span>' : '<span class="badge">read-only</span>'}
         <span class="badge">${q.planning === 'review' ? 'reviewed plan' : 'automatic plan'}</span>
-        <code>${esc(q.cwd)}</code>
-        ${q.repo?.branch ? `<span>branch <code>${esc(q.repo.branch)}</code>${q.repo.target ? ` → <code>${esc(q.repo.target)}</code>` : ''}</span>` : ''}
+        ${dirs}
+        ${branch ? `<span>branch <code>${esc(branch)}</code>${target ? ` → <code>${esc(target)}</code>` : ''}</span>` : ''}
         ${q.checkIn ? `<span class="badge" title="${esc(q.checkIn)}">check-ins</span>` : ''}
         <span>${q.agents.length} ${esc(W().inParty)}${working ? `, ${working} ${esc(W().afield)}` : ''}</span>
         <span>${money(total)}</span>
@@ -312,9 +451,13 @@ function renderHead() {
       </div>
     </div>
     <div class="row" style="flex:none">
+      ${G.apps.size ? `<label class="file-under" title="File this quest under a ${esc(W().app.toLowerCase())}">${esc(W().app)}
+        <select data-file-under><option value="">${esc(W().appNone)}</option>${[...G.apps.values()].map((x) => `<option value="${x.id}" ${x.id === q.app ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
       ${q.status === 'interrupted' ? '<button class="btn gold" data-resume-quest title="Carry on where the server stopped">Resume</button>' : ''}
       ${active ? `<button class="btn danger" data-cancel-quest>${esc(W().abandon)}</button>` : ''}
     </div>`;
+  const fu = $('[data-file-under]');
+  if (fu) fu.onchange = () => api('PUT', `/api/quests/${q.id}/app`, { app: fu.value || null }).catch((e) => toast(e.message));
   const goal = $('#q-head .goal'), more = $('#q-head .goal-more');
   more.classList.toggle('hidden', !G.goalOpen && goal.scrollHeight <= goal.clientHeight + 2);
   more.onclick = () => { G.goalOpen = !G.goalOpen; renderHead(); };
@@ -716,11 +859,14 @@ function renderChronicle() {
   el.classList.toggle('hidden', !show);
   if (!show) return;
   let html = `<h3 class="head">${esc(W().chronicle)}</h3><div class="md">${markdown(q.chronicle)}</div>`;
-  if (q.diff) {
-    html += `<div class="diff"><h3>Changes on <code>${esc(q.repo.branch)}</code></h3>
-      <p class="muted small">Review with <code>git log ${esc(q.repo.base.slice(0, 8))}..${esc(q.repo.branch)}</code> in <code>${esc(q.repo.root)}</code>${q.delivery?.target ? '' : ', then merge it yourself'}.</p>
-      <pre>${esc(q.diff.stat)}</pre>
-      <details><summary>Full diff${q.diff.truncated ? ' (truncated)' : ''}</summary><pre>${colourDiff(q.diff.patch)}</pre></details></div>`;
+  // Quests from before applications kept one diff and one repo.
+  const diffs = q.diffs ?? (q.diff ? [{ ...q.diff, ...q.repo, repo: null }] : []);
+  for (const d of diffs) {
+    if (!d.stat && diffs.length > 1) continue;
+    html += `<div class="diff"><h3>Changes${d.repo && diffs.length > 1 ? ` in ${esc(d.repo)}` : ''} on <code>${esc(d.branch)}</code></h3>
+      <p class="muted small">Review with <code>git log ${esc(d.base.slice(0, 8))}..${esc(d.branch)}</code> in <code>${esc(d.root)}</code>${q.delivery?.target ? '' : ', then merge it yourself'}.</p>
+      <pre>${esc(d.stat || 'No changes.')}</pre>
+      ${d.patch ? `<details><summary>Full diff${d.truncated ? ' (truncated)' : ''}</summary><pre>${colourDiff(d.patch)}</pre></details>` : ''}</div>`;
   }
   html += deliveryHtml(q);
   el.innerHTML = html;
@@ -728,19 +874,26 @@ function renderChronicle() {
   if (b) b.onclick = () => { b.disabled = true; api('POST', `/api/quests/${q.id}/deliver`).catch((e) => { b.disabled = false; toast(e.message); }); };
 }
 
-/** Where the result goes: the final commit, and a button to fast-forward the target branch to it. */
+/** Where the result goes: the final commit, and a button to fast-forward the target branch (one per repository). */
 function deliveryHtml(q) {
   const d = q.delivery;
   if (!d?.commit) return '';
-  const at = `<code>${esc(q.repo.branch)}</code> at <code>${esc(d.commit.slice(0, 8))}</code>`;
-  if (!d.target) return `<div class="delivery"><p>The result is ${at}.</p></div>`;
-  const t = `<code>${esc(d.target)}</code>`;
-  const body = {
-    delivered: `<p class="ok">✓ ${t} was fast-forwarded to ${at}${d.dir ? ` (checked out at <code>${esc(d.dir)}</code>)` : ''}.</p>`,
-    moved: `<p>${t} has new commits since the quest last merged it, so it can't simply fast-forward. Merge ${at} into it: <code>git merge ${esc(q.repo.branch)}</code> on ${t}.</p>`,
-    ready: `<p>The result is ${at}, ready to fast-forward ${t}.</p><button class="btn gold" data-deliver>Fast-forward ${esc(d.target)}</button>`,
-  }[d.status] ?? '';
-  return `<div class="delivery"><h3>Delivery</h3>${body}${d.error && d.status !== 'delivered' ? `<p class="error">${esc(d.error)}</p>` : ''}</div>`;
+  const party = q.repos?.[0]?.branch ?? q.repo?.branch;
+  const list = d.repos ?? [d];
+  const one = (r) => {
+    const at = `<code>${esc(party)}</code>${list.length > 1 ? ` in ${esc(r.name)}` : ''} at <code>${esc(r.commit.slice(0, 8))}</code>`;
+    if (!r.target) return `<p>The result is ${at}.</p>`;
+    const t = `<code>${esc(r.target)}</code>`;
+    return {
+      delivered: `<p class="ok">✓ ${t} was fast-forwarded to ${at}${r.dir ? ` (checked out at <code>${esc(r.dir)}</code>)` : ''}.</p>`,
+      moved: `<p>${t} has new commits since the quest last merged it, so it can't simply fast-forward. Merge ${at} into it: <code>git merge ${esc(party)}</code> on ${t}.</p>`,
+      ready: `<p>The result is ${at}, ready to fast-forward ${t}.</p>`,
+    }[r.status] ?? '';
+  };
+  if (!list.some((r) => r.target)) return `<div class="delivery">${list.map(one).join('')}</div>`;
+  const ready = list.filter((r) => r.status === 'ready');
+  const button = ready.length ? `<button class="btn gold" data-deliver>Fast-forward ${esc(ready.map((r) => r.target).join(', '))}</button>` : '';
+  return `<div class="delivery"><h3>Delivery</h3>${list.map(one).join('')}${button}${d.error && d.status !== 'delivered' ? `<p class="error">${esc(d.error)}</p>` : ''}</div>`;
 }
 
 function colourDiff(patch) {
@@ -789,7 +942,7 @@ function openAgent(id) {
         <div class="section"><h4>Task</h4><div class="md">${markdown(a.task)}</div></div>
         ${a.after?.length ? `<div class="section after"><h4>Depends on</h4>${afterLine(a)}</div>` : ''}
         ${a.question ? `<div class="section question"><h4>Asks</h4>${esc(a.question)}</div>` : ''}
-        ${a.branch ? `<div class="section"><h4>Branch</h4><code>${esc(a.branch)}</code> · ${a.commits ?? 0} commit(s)</div>` : ''}
+        ${a.branch ? `<div class="section"><h4>Branch</h4><code>${esc(a.branch)}</code> · ${a.commits ?? 0} commit(s)${a.commitsByRepo && Object.keys(a.commitsByRepo).length > 1 ? ` (${Object.entries(a.commitsByRepo).map(([r, n]) => `${esc(r)} ${n}`).join(', ')})` : ''}</div>` : ''}
         ${a.result ? `<div class="section"><h4>Final report</h4><div class="md">${markdown(a.result)}</div></div>` : ''}
         ${filesOf(a.id).length ? `<div class="section"><h4>Files</h4><div class="files big"></div></div>` : ''}
         <div class="section"><h4>Dispatches</h4><div class="reports">${reports.map((e) => `<div><span class="muted small">${stamp(e.ts)} · ${esc(whoLabel(e.who))}${e.to ? ` → ${esc(whoLabel(e.to))}` : ''}${e.percent !== undefined ? ` · ${e.percent}%` : ''}</span><div class="md">${markdown(e.text)}</div></div>`).join('') || '<span class="muted">None yet.</span>'}</div></div>
@@ -884,18 +1037,35 @@ function askText(title, hint = '') {
   });
 }
 
-function openNewQuest() {
+function openNewQuest(appId = null) {
   const dlg = $('#new-quest'), form = $('#new-quest-form');
-  form.cwd.value = form.cwd.value || G.settings.lastCwd || '';
-  form.maxAgents.value = G.settings.maxAgents ?? 6;
+  const apps = [...G.apps.values()];
+  $('#new-quest-app-label').classList.toggle('hidden', !apps.length);
+  form.app.innerHTML = `<option value="">${esc(W().appNone)}</option>${apps.map((a) => `<option value="${a.id}">${esc(a.name)} (${a.repos.map((r) => esc(r.name)).join(', ')})</option>`).join('')}`;
+  form.app.value = appId && G.apps.has(appId) ? appId : '';
+  form.cwd.value = '';
   if (!form.dataset.touched) form.checkIn.value = G.settings.checkIn ?? '';
   form.checkIn.oninput = () => { form.dataset.touched = '1'; };
   const editOnly = () => $('.edit-only', form).classList.toggle('hidden', form.mode.value !== 'edit');
   for (const r of form.querySelectorAll('[name=mode]')) r.onchange = editOnly;
+  form.app.onchange = () => { pickQuestApp(form); editOnly(); };
+  pickQuestApp(form);
   editOnly();
   $('#new-quest-error').textContent = '';
   dlg.showModal();
   form.goal.focus();
+}
+
+/** Fill the new-quest form from the chosen application's defaults (or the global ones). */
+function pickQuestApp(form) {
+  const app = G.apps.get(form.app.value), d = app?.defaults ?? {};
+  $('#new-quest-cwd-label').textContent = app ? 'Start directory (optional)' : 'Directory';
+  form.cwd.placeholder = app ? `${app.repos.map((r) => r.path).join(', ')}` : '/home/you/project';
+  if (!app) form.cwd.value = form.cwd.value || G.settings.lastCwd || '';
+  else if (form.cwd.value === G.settings.lastCwd) form.cwd.value = '';
+  form.mode.value = d.mode ?? 'read';
+  form.planning.value = d.planning ?? 'review';
+  form.maxAgents.value = d.maxAgents ?? G.settings.maxAgents ?? 6;
 }
 
 $('#new-quest-form').addEventListener('submit', async (e) => {
@@ -906,8 +1076,10 @@ $('#new-quest-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   $('#new-quest-error').textContent = '';
   try {
+    if (!form.app.value && !form.cwd.value.trim()) throw new Error(`Give a directory, or choose a ${W().app.toLowerCase()}.`);
     const q = await api('POST', '/api/quests', {
-      goal: form.goal.value, cwd: form.cwd.value.trim(), mode: form.mode.value, planning: form.planning.value, maxAgents: Number(form.maxAgents.value),
+      goal: form.goal.value, app: form.app.value || undefined, cwd: form.cwd.value.trim() || undefined,
+      mode: form.mode.value, planning: form.planning.value, maxAgents: Number(form.maxAgents.value),
       checkIn: form.checkIn.value,
       ...(form.mode.value === 'edit' ? { target: form.target.value.trim() || undefined, sync: form.sync.value, deliver: form.deliverAuto.checked ? 'auto' : 'offer' } : {}),
     });
@@ -919,6 +1091,50 @@ $('#new-quest-form').addEventListener('submit', async (e) => {
   } finally {
     btn.disabled = false;
   }
+});
+
+// ── application dialog ──
+
+function openAppDialog(app = null) {
+  const dlg = $('#app-dialog'), form = $('#app-form');
+  form.reset();
+  $('#app-dialog-title').textContent = app ? `Edit ${app.name}` : W().newApp;
+  if (app) {
+    form.name.value = app.name;
+    form.description.value = app.description ?? '';
+    form.repos.value = app.repos.map((r) => (r.name === r.path.split('/').pop() ? r.path : `${r.name}=${r.path}`)).join('\n');
+    form.context.value = app.context ?? '';
+    form.mode.value = app.defaults?.mode ?? '';
+    form.planning.value = app.defaults?.planning ?? '';
+    form.maxAgents.value = app.defaults?.maxAgents ?? '';
+  }
+  dlg.dataset.id = app?.id ?? '';
+  $('#app-adopt').classList.toggle('hidden', !!app);
+  $('#app-error').textContent = '';
+  dlg.showModal();
+  form.name.focus();
+}
+
+$('#app-form').addEventListener('submit', async (e) => {
+  const form = e.target;
+  if (e.submitter?.value !== 'ok') return;
+  e.preventDefault();
+  const id = $('#app-dialog').dataset.id;
+  const repos = form.repos.value.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const m = l.match(/^([\w.-]+)=(.+)$/);
+    return m ? { name: m[1], path: m[2].trim() } : { path: l };
+  });
+  const body = {
+    name: form.name.value, description: form.description.value, context: form.context.value, repos,
+    defaults: { mode: form.mode.value || null, planning: form.planning.value || null, maxAgents: Number(form.maxAgents.value) || null },
+    ...(id ? {} : { adopt: form.adopt.checked }),
+  };
+  try {
+    const app = await api(id ? 'PUT' : 'POST', id ? `/api/applications/${id}` : '/api/applications', body);
+    $('#app-dialog').close();
+    location.hash = `#/app/${app.id}`;
+    renderHome();
+  } catch (err) { $('#app-error').textContent = err.message; }
 });
 
 function openSettings() {
@@ -977,16 +1193,16 @@ $('#roles-save').onclick = async () => {
 };
 
 for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => b.closest('dialog').close();
-$('#new-quest-btn').onclick = openNewQuest;
+$('#new-quest-btn').onclick = () => openNewQuest(location.hash.match(/^#\/app\/([\w-]+)/)?.[1] ?? G.q?.app);
 $('#settings-btn').onclick = openSettings;
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector('dialog[open]')) openNewQuest();
+  if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.querySelector('dialog[open]')) $('#new-quest-btn').click();
 });
 
 /** Redraw the current view, e.g. after the theme changed. */
 function rerender() {
   renderTabs();
-  if (G.q) buildQuest(); else renderHall();
+  if (G.q) buildQuest(); else renderHome();
 }
 
 applyTheme();
