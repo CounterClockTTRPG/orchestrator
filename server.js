@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { Guild } from './lib/guild.js';
+import { findApp } from './lib/apps.js';
 import { HOME } from './lib/store.js';
 import { loadToken, allowedHosts, hostName, isLoopback, sameSecret, refuseApi } from './lib/auth.js';
 
@@ -68,8 +69,9 @@ function sse(req, res, onOpen) {
 const state = () => ({ settings: guild.settings, roles: guild.roles, apps: guild.listApps(), quests: guild.list().map((q) => q.summary()) });
 
 const appOf = (id) => {
-  if (!guild.apps[id]) throw new HttpError(404, `No application ${id}`);
-  return guild.apps[id];
+  const app = findApp(guild.apps, id);
+  if (!app) throw new HttpError(404, `No application ${id}`);
+  return app;
 };
 
 const questOf = (id) => {
@@ -106,7 +108,7 @@ const API = {
     ['GET', '/api/quests/:id/files/:fid', 'a file an agent or the Archmage attached (screenshot, report); ?download=1 saves it'],
     ['POST', '/api/quests/:id/agents/:aid/cancel', 'recall one agent'],
     ['GET', '/api/applications', 'applications: { id, name, description, repos: [{ name, path }], context, defaults }'],
-    ['POST', '/api/applications', '{ name, repos: [path | { name, path }], description?, context?, defaults?: { mode, planning, maxAgents }, id? } → the application'],
+    ['POST', '/api/applications', '{ name, repos: [path | { name, path }], description?, context?, defaults?: { mode, planning, maxAgents }, id?, adopt? } → the application. adopt: file existing quests in its directories under it. A GUILD.md at the top of a directory is read as extra context'],
     ['GET', '/api/applications/:aid', 'one application with its quest summaries'],
     ['PUT', '/api/applications/:aid', 'update an application (same fields; the id stays)'],
     ['DELETE', '/api/applications/:aid', 'delete an application; its quests stay, ungrouped'],

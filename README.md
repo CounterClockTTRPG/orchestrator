@@ -154,16 +154,27 @@ curl -s localhost:7777/api/applications -H 'content-type: application/json' -d '
   worktree per repository (`ttrpg2/`, `dungml/`), all on branch `guild/<quest>/<agent>`. The Archmage's integration
   workspace is the same shape. `merge_party` merges repository by repository, and the result is
   `guild/<quest>/party` in each repository. With a single repository nothing changes.
-- **Briefing.** The Archmage is told the application's description, its directories, the standing context, and the
-  last twelve finished quests on it, each with the path of its chronicle (`~/.guild/quests/<id>/chronicle.md`). It can
-  read those chronicles and hand them on to agents.
+- **Briefing.** The Archmage is told the application's description, its directories, and the last twelve finished
+  quests on it, each with the path of its chronicle (`~/.guild/quests/<id>/chronicle.md`). For an edit quest the
+  line also says whether its branch has reached your checkout, so an unmerged chronicle isn't taken as fact.
+- **Standing context.** The application's context, plus a `GUILD.md` at the top of any of its directories (notes
+  that are versioned with the code), goes to the Archmage and to every agent. Quests on a plain directory read its
+  `GUILD.md` too.
 - **Defaults.** `mode`, `planning` and `maxAgents` that a quest doesn't set come from the application, then from
   the global settings.
-- **Grouping.** The hall lists applications, then the quests that belong to none. A quest can be moved to another
+- **Grouping.** The hall lists applications, then the quests that belong to none. A new application can adopt the
+  existing quests on its directories (`adopt: true`, a checkbox in the UI). A quest can be moved to another
   application, or to none, from its page or with `PUT /api/quests/:id/app`. That changes only the grouping (and
   later briefings), not the directories of a running quest.
 
 Applications are stored in `~/.guild/applications.json`.
+
+### Merging
+
+Git decides what is merged: an agent's work counts as merged when its branch is contained in the quest branch. An
+agent woken after its merge that commits again is merged again, and `finish_quest` refuses while any finished
+agent has unmerged commits. To drop work on purpose (say, after `git merge --abort` on a conflict), the Archmage
+calls `merge_party` with `leaveOut: [agentId]`, and should say why in the chronicle.
 
 ## Roles
 

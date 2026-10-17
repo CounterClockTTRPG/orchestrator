@@ -389,6 +389,8 @@ function buildQuest() {
 function renderHead() {
   const q = G.q;
   if (!q || !$('#q-head')) return;
+  // Agent events re-render the head often; don't pull the application list from under the human.
+  if (document.activeElement?.matches?.('[data-file-under]')) return;
   const active = ACTIVE.has(q.status);
   const working = q.agents.filter((a) => a.status === 'working' || a.status === 'blocked').length;
   const total = (q.archmage?.costUsd ?? 0) + q.agents.reduce((n, a) => n + (a.costUsd ?? 0), 0);
@@ -957,6 +959,7 @@ function openAppDialog(app = null) {
     form.maxAgents.value = app.defaults?.maxAgents ?? '';
   }
   dlg.dataset.id = app?.id ?? '';
+  $('#app-adopt').classList.toggle('hidden', !!app);
   $('#app-error').textContent = '';
   dlg.showModal();
   form.name.focus();
@@ -974,6 +977,7 @@ $('#app-form').addEventListener('submit', async (e) => {
   const body = {
     name: form.name.value, description: form.description.value, context: form.context.value, repos,
     defaults: { mode: form.mode.value || null, planning: form.planning.value || null, maxAgents: Number(form.maxAgents.value) || null },
+    ...(id ? {} : { adopt: form.adopt.checked }),
   };
   try {
     const app = await api(id ? 'PUT' : 'POST', id ? `/api/applications/${id}` : '/api/applications', body);

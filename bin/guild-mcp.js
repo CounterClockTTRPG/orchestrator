@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serveMcp, api } from '../lib/mcp.js';
+import { appForDir } from '../lib/apps.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const URL_ = process.env.GUILD_URL || `http://127.0.0.1:${process.env.GUILD_PORT || 7777}`;
@@ -76,9 +77,8 @@ function result(q) {
 async function pickApp(app, cwd) {
   if (app === 'none') return null;
   if (app) return app;
-  const within = (d, root) => d === root || d.startsWith(root + path.sep);
-  const hits = (await call('GET', '/api/applications')).filter((a) => a.repos.some((r) => within(path.resolve(cwd), r.path)));
-  return hits.length === 1 ? hits[0].id : null;
+  const apps = Object.fromEntries((await call('GET', '/api/applications')).map((a) => [a.id, a]));
+  return appForDir(apps, cwd)?.id ?? null;
 }
 
 const id = { type: 'string', description: 'Quest id' };
