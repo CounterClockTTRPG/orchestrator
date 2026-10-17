@@ -51,7 +51,7 @@ const browserUrl = (id) => `${URL_.replace('127.0.0.1', 'localhost')}/#/quest/${
 
 function status(q) {
   const lines = [
-    `Quest ${q.id} — ${q.status}${q.costUsd ? ` ($${q.costUsd.toFixed(2)})` : ''}`,
+    `Quest ${q.id} — ${q.status}${q.costUsd ? ` ($${q.costUsd.toFixed(2)})` : ''}${q.app ? ` · application ${q.app}` : ''}`,
     `Goal: ${q.goal}`,
     `Watch: ${browserUrl(q.id)}`,
   ];
@@ -60,14 +60,25 @@ function status(q) {
   for (const a of q.agents ?? []) {
     lines.push(`- ${a.name} the ${a.title} (${a.id}): ${a.status} ${a.percent}%${a.phase ? `, ${a.phase}` : ''}${a.question ? ` — asks: ${a.question}` : a.lastReport ? ` — ${a.lastReport}` : ''}`);
   }
-  if (q.repo?.branch && q.status === 'done') lines.push(`Branch for review: ${q.repo.branch}`);
+  const repos = q.repos ?? (q.repo ? [{ name: 'repository', ...q.repo }] : []);
+  if (repos.length && q.status === 'done') lines.push(`Branch for review: ${repos[0].branch}${repos.length > 1 ? ` in ${repos.map((r) => `${r.name} (${r.root})`).join(', ')}` : ''}`);
   return lines.join('\n');
 }
 
 function result(q) {
   let out = `${status(q)}\n\n## Chronicle\n\n${q.chronicle ?? '(none)'}`;
-  if (q.diff?.stat) out += `\n\n## Changes (${q.repo?.branch ?? 'quest branch'})\n\n${q.diff.stat}`;
+  const diffs = q.diffs ?? (q.diff ? [{ ...q.diff, repo: null, branch: q.repo?.branch }] : []);
+  for (const d of diffs) if (d.stat) out += `\n\n## Changes${d.repo ? ` in ${d.repo}` : ''} (${d.branch ?? 'quest branch'})\n\n${d.stat}`;
   return out;
+}
+
+/** The application to use: the one named, none for 'none', else the one whose directories hold `cwd`. */
+async function pickApp(app, cwd) {
+  if (app === 'none') return null;
+  if (app) return app;
+  const within = (d, root) => d === root || d.startsWith(root + path.sep);
+  const hits = (await call('GET', '/api/applications')).filter((a) => a.repos.some((r) => within(path.resolve(cwd), r.path)));
+  return hits.length === 1 ? hits[0].id : null;
 }
 
 const id = { type: 'string', description: 'Quest id' };
@@ -84,16 +95,32 @@ serveMcp({
         properties: {
           goal: { type: 'string', description: 'What the party should achieve, with any context it needs' },
           cwd: { type: 'string', description: 'Directory to work on (default: this project)' },
+          app: { type: 'string', description: 'Application id (see list_applications): the party works on all its directories, briefed with its context and earlier quests. Default: the application that contains cwd, if any; "none" for just cwd' },
           mode: { type: 'string', enum: ['read', 'edit'], description: 'read: research only (default). edit: agents change code on branches; the result is a branch to review' },
-          planning: { type: 'string', enum: ['review', 'auto'], description: 'review: the human approves the plan in the browser. auto: dispatch at once (default here)' },
-          maxAgents: { type: 'number', description: 'Party size limit (default 6)' },
+          planning: { type: 'string', enum: ['review', 'auto'], description: 'review: the human approves the plan in the browser. auto: dispatch at once (default here, unless the application sets it)' },
+          maxAgents: { type: 'number', description: 'Party size limit (default 6, or the application\'s)' },
         },
         required: ['goal'],
         additionalProperties: false,
       },
-      handler: async ({ goal, cwd, mode = 'read', planning = 'auto', maxAgents }) => {
-        const q = await call('POST', '/api/quests', { goal, cwd: cwd || process.cwd(), mode, planning, maxAgents });
-        return `Quest ${q.id} started (${mode}, ${planning} planning).\nWatch it at ${browserUrl(q.id)}\nUse wait_for_quest to get the result.`;
+      handler: async ({ goal, cwd, app, mode, planning, maxAgents }) => {
+        cwd = cwd || process.cwd();
+        app = await pickApp(app, cwd);
+        if (!planning) {
+          const defaults = app ? (await call('GET', `/api/applications/${app}`)).defaults : {};
+          planning = defaults.planning ?? 'auto';
+        }
+        const q = await call('POST', '/api/quests', { goal, cwd, app: app ?? undefined, mode, planning, maxAgents });
+        return `Quest ${q.id} started (${q.mode}, ${q.planning} planning${app ? `, application ${app}: ${q.dirs.map((d) => d.name).join(', ')}` : ''}).\nWatch it at ${browserUrl(q.id)}\nUse wait_for_quest to get the result.`;
+      },
+    },
+    {
+      name: 'list_applications',
+      description: 'Applications: named groups of directories (e.g. a backend and its client) that quests can work on together.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async () => {
+        const apps = await call('GET', '/api/applications');
+        return apps.map((a) => `${a.id}  ${a.name}${a.description ? ` — ${a.description}` : ''}\n  ${a.repos.map((r) => `${r.name}: ${r.path}`).join('\n  ')}`).join('\n') || 'No applications yet.';
       },
     },
     {
@@ -127,7 +154,7 @@ serveMcp({
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       handler: async () => {
         const qs = await call('GET', '/api/quests');
-        return qs.slice(0, 20).map((q) => `${q.id}  ${String(q.status ?? '?').padEnd(17)} ${String(q.goal ?? '').slice(0, 80)}`).join('\n') || 'No quests yet.';
+        return qs.slice(0, 20).map((q) => `${q.id}  ${String(q.status ?? '?').padEnd(17)} ${q.app ? `[${q.app}] ` : ''}${String(q.goal ?? '').slice(0, 80)}`).join('\n') || 'No quests yet.';
       },
     },
     {

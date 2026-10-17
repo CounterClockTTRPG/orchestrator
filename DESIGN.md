@@ -16,6 +16,7 @@ council live, with portraitgen portraits.
 | Party shape | **Flat**: only the Archmage recruits. Subagents have the built-in Task/Agent tool disabled. |
 | Edit output | Agents commit on `guild/<quest>/<agent>`. The Archmage merges them into `guild/<quest>` and resolves conflicts. The quest then **stops for your review**; nothing touches your main branch. |
 | Non-git dir | Edit mode is refused. Read-only works anywhere. |
+| Applications | An optional, **explicit** level above quests: a named set of directories (one system across repos), standing context, quest defaults. Not inferred from paths in the core, because one system often spans several repos; only the MCP client picks the application that contains `cwd` as a convenience. Quests on an application see all its directories, and edit mode gives one worktree per repo inside each agent's workspace, merged per repo. Earlier chronicles reach the Archmage as file paths in its briefing (not inlined), so it reads only the ones that matter. |
 | Browser controls | Cancel an agent or the quest, message a running agent, answer a blocked agent (your answer wins over the Archmage's). |
 | Roles | `roles.json` catalog (look, prompt, tools, model). The planner may **invent** a role; it gets a derived look and the UI offers *Save to catalog*. |
 | Look | Same race, outfit, colours and props per role; **distinct face and name** per agent (seeded by agent name). |

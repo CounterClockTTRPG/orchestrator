@@ -32,8 +32,11 @@
       <label>Goal
         <textarea name="goal" rows="5" required data-w-placeholder="goalHint" placeholder="What should the party achieve? Give the context they need."></textarea>
       </label>
-      <label>Directory
-        <input name="cwd" required placeholder="/home/you/project" spellcheck="false">
+      <label id="new-quest-app-label"><span data-w="app">Application</span>
+        <select name="app" id="new-quest-app"></select>
+      </label>
+      <label><span id="new-quest-cwd-label">Directory</span>
+        <input name="cwd" placeholder="/home/you/project" spellcheck="false">
       </label>
       <div class="row">
         <fieldset class="seg"><legend>Mode</legend>
@@ -52,6 +55,32 @@
       <div class="actions">
         <button type="button" data-close class="btn ghost">Cancel</button>
         <button id="new-quest-submit" value="ok" class="btn gold" data-w="summon">Summon the Archmage</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Application (create / edit) -->
+  <dialog id="app-dialog" class="panel">
+    <form method="dialog" id="app-form">
+      <h2 id="app-dialog-title"></h2>
+      <label>Name <input name="name" required placeholder="TTRPG platform"></label>
+      <label>Description <input name="description" placeholder="What the system is, in one line"></label>
+      <label>Directories
+        <textarea name="repos" rows="3" required class="mono" spellcheck="false" placeholder="/home/you/backend&#10;/home/you/client"></textarea>
+        <span class="small">One per line. Each is named after its folder; write <code>name=/path</code> to choose the name.</span>
+      </label>
+      <label>Standing context
+        <textarea name="context" rows="6" placeholder="Told to the Archmage at the start of every quest: how the parts fit together, contracts between them, conventions, things never to break."></textarea>
+      </label>
+      <div class="row">
+        <label>Default mode <select name="mode"><option value="">Ask each time</option><option value="read">Read-only</option><option value="edit">Edit (git branches)</option></select></label>
+        <label>Default planning <select name="planning"><option value="">Ask each time</option><option value="review">I review</option><option value="auto">Automatic</option></select></label>
+        <label class="narrow"><span data-w="partySize">Party size</span> <input name="maxAgents" type="number" min="1" max="20" placeholder="global"></label>
+      </div>
+      <p class="error" id="app-error"></p>
+      <div class="actions">
+        <button type="button" data-close class="btn ghost">Cancel</button>
+        <button value="ok" class="btn gold">Save</button>
       </div>
     </form>
   </dialog>

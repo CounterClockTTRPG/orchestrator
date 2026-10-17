@@ -65,6 +65,13 @@ function sse(req, res, onOpen) {
   req.on('close', () => { clearInterval(ping); cleanup(); });
 }
 
+const state = () => ({ settings: guild.settings, roles: guild.roles, apps: guild.listApps(), quests: guild.list().map((q) => q.summary()) });
+
+const appOf = (id) => {
+  if (!guild.apps[id]) throw new HttpError(404, `No application ${id}`);
+  return guild.apps[id];
+};
+
 const questOf = (id) => {
   const q = guild.quests.get(id);
   if (!q) throw new HttpError(404, `No quest ${id}`);
@@ -74,17 +81,18 @@ const questOf = (id) => {
 // The public API, described for agents that find the server with nothing but its URL (GET /api, /llms.txt).
 const API = {
   name: 'Guild',
-  about: 'Orchestrates Claude Code agents. Post a quest (a goal on a directory of the machine running this server); an orchestrator agent, the Archmage, plans a party of subagents, runs them and writes a final chronicle.',
+  about: 'Orchestrates Claude Code agents. Post a quest (a goal on a directory of the machine running this server, or on an application: a named group of directories); an orchestrator agent, the Archmage, plans a party of subagents, runs them and writes a final chronicle.',
   quickstart: [
     'POST /api/quests with {"goal":"…","cwd":"/abs/path/on/the/server","mode":"read","planning":"auto"} → the quest state; keep its id.',
     'Poll GET /api/quests/:id (status, agents, and the chronicle once finished) or follow GET /api/quests/:id/events (SSE).',
     'With planning "review" the quest pauses at status "awaiting-approval" until POST /api/quests/:id/plan/approve.',
     'mode "edit" lets agents change files: each works on its own git worktree and branch, merged by the Archmage. cwd must be a git repo.',
+    'Applications group the quests on one system: POST /api/applications with {"name":"…","repos":["/abs/a","/abs/b"],"context":"…"}, then post quests with {"app":"<id>"}. The party works on all its directories, and the Archmage is briefed with the context and the chronicles of earlier quests.',
   ],
   mcp: 'From Claude Code: claude mcp add guild -e GUILD_URL=<this server> -e GUILD_TOKEN=<its token> -- node <guild repo>/bin/guild-mcp.js',
   auth: 'Send the token as the x-guild-token header (or Authorization: Bearer). It is in GUILD_HOME/token on the server (default ~/.guild/token); requests from the server machine itself need none. Writes must be JSON and must not come from another origin.',
   endpoints: [
-    ['POST', '/api/quests', '{ goal, cwd, mode: "read"|"edit", planning: "review"|"auto", maxAgents? } → quest state'],
+    ['POST', '/api/quests', '{ goal, cwd?, app?, mode?: "read"|"edit", planning?: "review"|"auto", maxAgents? } → quest state. With app, cwd (optional) is where the Archmage starts, and unset options come from the application'],
     ['GET', '/api/quests', 'quest summaries'],
     ['GET', '/api/quests/:id', 'full quest state, including the chronicle when done'],
     ['GET', '/api/quests/:id/events', 'SSE: snapshot, then quest, archmage, agent, activity, log, report, plan, roles, chronicle'],
@@ -92,10 +100,16 @@ const API = {
     ['POST', '/api/quests/:id/plan/approve', '{ agents?: [{ role, task }] }: approve the plan, optionally edited'],
     ['POST', '/api/quests/:id/message', '{ text } to the Archmage'],
     ['POST', '/api/quests/:id/cancel', 'abandon the quest'],
+    ['PUT', '/api/quests/:id/app', '{ app: id|null }: file the quest under an application'],
     ['POST', '/api/quests/:id/agents/:aid/message', '{ text } to one agent'],
     ['POST', '/api/quests/:id/agents/:aid/answer', '{ text }: answer an agent blocked on a question'],
     ['GET', '/api/quests/:id/files/:fid', 'a file an agent or the Archmage attached (screenshot, report); ?download=1 saves it'],
     ['POST', '/api/quests/:id/agents/:aid/cancel', 'recall one agent'],
+    ['GET', '/api/applications', 'applications: { id, name, description, repos: [{ name, path }], context, defaults }'],
+    ['POST', '/api/applications', '{ name, repos: [path | { name, path }], description?, context?, defaults?: { mode, planning, maxAgents }, id? } → the application'],
+    ['GET', '/api/applications/:aid', 'one application with its quest summaries'],
+    ['PUT', '/api/applications/:aid', 'update an application (same fields; the id stays)'],
+    ['DELETE', '/api/applications/:aid', 'delete an application; its quests stay, ungrouped'],
     ['GET', '/api/roles', 'the role catalog'],
     ['PUT', '/api/roles', 'replace the role catalog'],
     ['POST', '/api/roles/:rid', '{ role } or { quest }: save a role (e.g. one the Archmage invented)'],
@@ -116,9 +130,9 @@ const routes = [
   ['GET', '/api', () => API],
   ['GET', '/llms.txt', (p, req, res) => { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); res.end(llmsTxt); }],
   ['GET', '/api/health', () => ({ ok: true, name: 'guild' })],
-  ['GET', '/api/state', () => ({ settings: guild.settings, roles: guild.roles, quests: guild.list().map((q) => q.summary()) })],
+  ['GET', '/api/state', () => state()],
   ['GET', '/api/events', (p, req, res) => sse(req, res, (send) => {
-    send('state', { settings: guild.settings, roles: guild.roles, quests: guild.list().map((q) => q.summary()) });
+    send('state', state());
     const on = (e) => send(e.type, e);
     guild.on('global', on);
     return () => guild.off('global', on);
@@ -136,6 +150,7 @@ const routes = [
       return () => guild.off('quest', on);
     });
   }],
+  ['PUT', '/api/quests/:id/app', async ({ id }, req) => { questOf(id).setApp((await body(req)).app ?? null); return questOf(id).summary(); }],
   ['POST', '/api/quests/:id/plan/approve', async ({ id }, req) => ({ party: questOf(id).approvePlan((await body(req)).agents) })],
   ['POST', '/api/quests/:id/cancel', async ({ id }) => { await questOf(id).cancel(); return { ok: true }; }],
   ['POST', '/api/quests/:id/message', async ({ id }, req) => { questOf(id).messageArchmage(need((await body(req)).text)); return { ok: true }; }],
@@ -159,6 +174,12 @@ const routes = [
       res.end(data);
     });
   }],
+
+  ['GET', '/api/applications', () => guild.listApps()],
+  ['POST', '/api/applications', async (p, req) => guild.saveApp(null, await body(req))],
+  ['GET', '/api/applications/:aid', ({ aid }) => ({ ...appOf(aid), quests: guild.list().filter((q) => q.s.app === aid).map((q) => q.summary()) })],
+  ['PUT', '/api/applications/:aid', async ({ aid }, req) => { appOf(aid); return guild.saveApp(aid, await body(req)); }],
+  ['DELETE', '/api/applications/:aid', ({ aid }) => { appOf(aid); guild.deleteApp(aid); return { ok: true }; }],
 
   ['GET', '/api/roles', () => guild.roles],
   ['PUT', '/api/roles', async (p, req) => guild.replaceRoles(await body(req))],
