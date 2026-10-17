@@ -5,6 +5,7 @@ import { markdown, esc } from './markdown.js';
 import { theme, themedRole, THEMES, presentationOfName } from './themes.js';
 import { agentElapsed, questElapsed, duration, ago } from './elapsed.js';
 import { agentTitle, memberTitle, sameAsTitle } from './titles.js';
+import { questTally } from './tally.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const ACTIVE = new Set(['planning', 'awaiting-approval', 'questing']);
@@ -210,9 +211,14 @@ function questCard(q, { showApp = true } = {}) {
     </a>`;
 }
 
+/** One small badge per state (a dot and a count, the word on hover): how an application's quests stand. */
+function tallyBadges(qs) {
+  return `<span class="tally">${questTally(qs).map(({ key, n }) =>
+    `<span class="badge count" title="${n} ${esc(questWord(key).toLowerCase())}"><span class="dot ${key}"></span>${n}</span>`).join('')}</span>`;
+}
+
 function appCard(app) {
   const qs = [...G.quests.values()].filter((q) => q.app === app.id).sort(byNewest);
-  const active = qs.filter((q) => ACTIVE.has(q.status)).length;
   const cost = qs.reduce((n, q) => n + (q.costUsd ?? 0), 0);
   return `
     <a class="quest-card app-card" href="#/app/${app.id}">
@@ -220,8 +226,7 @@ function appCard(app) {
       ${app.description ? `<div class="desc">${esc(app.description)}</div>` : ''}
       <div class="meta">${app.repos.map((r) => `<code title="${esc(r.path)}">${esc(r.name)}</code>`).join('')}</div>
       <div class="meta">
-        ${active ? `<span><span class="dot questing"></span> ${active} ${esc(questWord('questing').toLowerCase())}</span>` : ''}
-        <span>${qs.length} ${qs.length === 1 ? 'quest' : 'quests'}</span><span>${money(cost)}</span>
+        ${tallyBadges(qs)}<span>${money(cost)}</span>
         ${qs[0] ? `<span>last ${when(qs[0].createdAt)}</span>` : ''}
       </div>
     </a>`;
@@ -285,7 +290,7 @@ function renderApp(id) {
             ${app.repos.map((r) => `<span><b>${esc(r.name)}</b> <code>${esc(r.path)}</code></span>`).join('')}
           </div>
           <div class="meta">
-            <span>${qs.length} ${qs.length === 1 ? 'quest' : 'quests'}</span><span>${money(cost)}</span>
+            ${tallyBadges(qs)}<span>${money(cost)}</span>
             ${defaults.map((x) => `<span class="badge">${esc(x)}</span>`).join('')}
           </div>
         </div>

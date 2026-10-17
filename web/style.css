@@ -198,6 +198,9 @@ main { padding: 1.2rem; max-width: 1500px; margin: 0 auto; }
 .app-card .meta { margin-top: 0.4rem; }
 .app-card .meta code, .badge.app { font-family: var(--mono); font-size: 0.78rem; color: var(--ink); background: var(--bg2); padding: 0.05rem 0.4rem; border-radius: 4px; }
 .badge.app { font-family: var(--body); border-color: var(--gold-soft); color: var(--gold); }
+.tally { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.badge.count { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.badge.count .dot { width: 7px; height: 7px; }
 .crumbs { margin: 0 0 0.3rem; font-size: 0.85rem; color: var(--muted); }
 .crumbs a { color: var(--gold); }
 .app-page .app-name { color: var(--gold); margin: 0 0 0.3rem; font-size: 1.8rem; }
