@@ -56,11 +56,20 @@ function serveStatic(res, file) {
   });
 }
 
-function sse(req, res, onOpen) {
+// What an SSE client may leave unread before it is dropped: a stalled tab must not make the server hold every
+// event for it. The first write (a snapshot of any size) always goes out; a reconnect replays what was missed.
+const SSE_BUFFER = 4_000_000;
+
+function sse(req, res, onOpen, limit = SSE_BUFFER) {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  const write = (text) => {
+    if (res.destroyed) return;
+    if (res.writableLength > limit) return res.destroy(); // 'close' then unsubscribes it
+    res.write(text);
+  };
   // An id lets EventSource send Last-Event-ID when it reconnects.
-  const send = (event, data, id) => res.write(`${id === undefined ? '' : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
+  const send = (event, data, id) => write(`${id === undefined ? '' : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const ping = setInterval(() => write(': ping\n\n'), 20_000);
   const cleanup = onOpen(send);
   req.on('close', () => { clearInterval(ping); cleanup(); });
 }
@@ -126,7 +135,7 @@ function need(text) {
  * yet. `token` is the API token (default: GUILD_TOKEN or GUILD_HOME/token); `hosts` the names a request's Host may
  * carry (default: this machine's, looked up again every minute).
  */
-export function createServer(guild, { token = loadToken(store.HOME), hosts: fixedHosts } = {}) {
+export function createServer(guild, { token = loadToken(store.HOME), hosts: fixedHosts, sseBuffer = SSE_BUFFER } = {}) {
   let hosts = fixedHosts ?? allowedHosts(), hostsAt = Date.now();
   const state = () => ({ settings: guild.settings, roles: guild.roles, apps: guild.listApps(), quests: guild.list().map((q) => q.summary()) });
 
@@ -153,7 +162,7 @@ export function createServer(guild, { token = loadToken(store.HOME), hosts: fixe
       const on = (e) => send(e.type, e);
       guild.on('global', on);
       return () => guild.off('global', on);
-    })],
+    }, sseBuffer)],
 
     ['GET', '/api/quests', () => guild.list().map((q) => q.summary())],
     ['POST', '/api/quests', async (p, req) => (await guild.createQuest(await body(req))).state],
@@ -172,7 +181,7 @@ export function createServer(guild, { token = loadToken(store.HOME), hosts: fixe
         const on = (e) => { if (e.quest === id) send(e.type, e, e.seq); };
         guild.on('quest', on);
         return () => guild.off('quest', on);
-      });
+      }, sseBuffer);
     }],
     ['PUT', '/api/quests/:id/app', async ({ id }, req) => { questOf(id).setApp((await body(req)).app ?? null); return questOf(id).summary(); }],
     ['POST', '/api/quests/:id/plan/approve', async ({ id }, req) => ({ party: questOf(id).approvePlan((await body(req)).agents) })],
@@ -289,14 +298,22 @@ if (isMain) {
   const TOKEN = loadToken(store.HOME);
   const server = createServer(guild, { token: TOKEN });
 
-  // Stop the Archmages and agents with the server; their quests show as interrupted on the next start.
+  // One quest's error must not take down the others: log it and keep serving.
+  process.on('unhandledRejection', (err) => console.error('Guild: unhandled rejection:', err));
+  process.on('uncaughtException', (err) => console.error('Guild: uncaught exception:', err));
+
+  // Stop the Archmages and agents with the server. Their quests are saved as interrupted first, so the exit
+  // handlers revive nobody and fail nobody, and they can be resumed on the next start.
+  let stopping = false;
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => {
-      for (const q of guild.quests.values()) {
-        q.arch?.kill();
-        for (const s of q.sessions.values()) s.kill();
-      }
-      setTimeout(() => process.exit(0), 300);
+    process.on(signal, async () => {
+      if (stopping) return; // a second Ctrl-C while waiting: the sessions are already being stopped
+      stopping = true;
+      server.close();
+      server.closeAllConnections();
+      setTimeout(() => process.exit(0), 10_000).unref(); // never hang on the way out
+      try { await guild.shutdown(); } catch (err) { console.error('Guild: shutdown:', err); }
+      process.exit(0);
     });
   }
 
