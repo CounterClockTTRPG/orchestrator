@@ -207,6 +207,38 @@ class Harness {
   }
 
   /**
+   * Stop the server the way a shutdown should: quests marked interrupted first (so no Archmage is revived), sessions
+   * killed and awaited. Then a fresh Guild loads the same GUILD_HOME and serves on a new port; h points to it.
+   */
+  async restart() {
+    const old = this.guild, running = [];
+    for (const q of old.quests.values()) {
+      clearInterval(q.timer);
+      q.markInterrupted();
+      running.push(...[q.arch, ...q.sessions.values()].filter(Boolean));
+    }
+    for (const s of running) s.kill();
+    await this.waitFor(() => running.every((s) => s.exited || !s.proc), { what: 'the sessions to exit' });
+    for (const q of old.quests.values()) {
+      clearTimeout(q.saveTimer); // nothing stale may overwrite the new server's saves
+      for (const ask of q.asks.values()) { clearTimeout(ask.timer); for (const w of ask.waiters.splice(0)) w('The server stopped.'); }
+    }
+    this.server.closeAllConnections();
+    await new Promise((r) => this.server.close(r));
+
+    const { createServer } = await import('../../server.js');
+    const guild = new old.constructor({ port: 0 });
+    const server = createServer(guild, { token: this.token });
+    await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    Object.assign(guild, { port, url: `http://127.0.0.1:${port}` });
+    Object.assign(this, { guild, server, port, url: guild.url });
+  }
+
+  /** quest.json as it is on disk. */
+  questFile(id) { return JSON.parse(fs.readFileSync(path.join(this.home, 'quests', id, 'quest.json'), 'utf8')); }
+
+  /**
    * Stop everything: quests are marked interrupted first (so no Archmage is revived), every session is killed and
    * awaited, the server is closed, leftover fake-claude and MCP processes are killed, and the temp files removed.
    */

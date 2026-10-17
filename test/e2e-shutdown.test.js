@@ -19,7 +19,8 @@ const scenario = { sessions: [
   { match: { archmage: true }, steps: [
     { call: 'propose_plan', args: { summary: 's', agents: [{ role: 'researcher', title: 'Long job', task: 'Scout it.' }] } },
     { result: 'Proposed.' }, { wait: 'never' }] },
-  { match: { role: 'Scout' }, steps: [{ call: 'report_progress', args: { percent: 10, message: 'Started.' } }, { hang: true }] },
+  // It is blocked on a question when the server stops: the question must survive for the resume.
+  { match: { role: 'Scout' }, steps: [{ call: 'report_progress', args: { percent: 10, message: 'Started.' } }, { call: 'ask', args: { question: 'Which way?' } }] },
 ] };
 
 let root, home, fake, repo, port, servers = [];
@@ -71,7 +72,7 @@ before(async () => {
 
   first = await startServer();
   quest = await api('POST', '/api/quests', { goal: 'Map it', cwd: repo, mode: 'read', planning: 'auto' });
-  await waitFor(async () => (await api('GET', `/api/quests/${quest.id}`)).agents[0]?.percent === 10, 'the agent to report');
+  await waitFor(async () => (await api('GET', `/api/quests/${quest.id}`)).agents[0]?.status === 'blocked', 'the agent to ask');
   first.proc.kill('SIGTERM');
   stopped = await first.exited;
   await sleep(500); // a revived Archmage would have been spawned by now
@@ -107,4 +108,5 @@ test('a new server on the same home shows the quest as interrupted, with its age
   await second.exited;
   assert.equal(q.status, 'interrupted', q.log.slice(-4).map((e) => e.text).join(' | '));
   assert.deepEqual(q.agents.map((a) => a.status), ['interrupted']);
+  assert.equal(q.agents[0].ask?.question, 'Which way?', 'the open question is kept, to be asked again on resume');
 });
