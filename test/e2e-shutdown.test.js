@@ -90,17 +90,17 @@ test('SIGTERM stops the server', () => {
   assert.equal(stopped.code, 0);
 });
 
-test('stopping the server does not revive the Archmage as an orphan (bug 1)', { todo: 'bug 1: the SIGTERM handler kills the Archmage while the quest is still active, so its exit handler revives it' }, () => {
+test('stopping the server does not revive the Archmage as an orphan (bug 1)', () => {
   const archmages = fakeLog().filter((e) => e.event === 'start' && e.mcpServers.council);
   assert.equal(archmages.length, 1, `the Archmage started ${archmages.length} times`);
 });
 
-test('stopping the server does not record the agents as failed (bug 1)', { todo: 'bug 1: killed agents are logged as failed, so a resume would skip them' }, () => {
+test('stopping the server does not record the agents as failed (bug 1)', () => {
   const failed = events(quest.id).filter((e) => e.type === 'log' && e.entry?.kind === 'failed');
   assert.deepEqual(failed.map((e) => e.entry.text), []);
 });
 
-test('a new server on the same home shows the quest as interrupted, with its agents interrupted', { todo: 'bug 1: the stop leaves the quest and agents recorded as failed (and whether it is saved before exit is a race)' }, async () => {
+test('a new server on the same home shows the quest as interrupted, with its agents interrupted', async () => {
   const second = await startServer();
   const q = await api('GET', `/api/quests/${quest.id}`);
   second.proc.kill('SIGTERM');
