@@ -272,7 +272,7 @@ test('an Archmage that never finishes after the party returned is nudged three t
   assert.match(q.chronicle, /did not finish the quest/);
 });
 
-test('chats with the human after the party returned do not use up the nudges (bug 7)', { todo: 'bug 7: the nudge counter is shared and never resets, so a third chat fails a finished quest' }, async () => {
+test('chats with the human after the party returned do not use up the nudges (bug 7)', async () => {
   const { id } = await h.createQuest({ goal: 'GOAL-NUDGE-CHAT', cwd: repo });
   // Chat once after each of the first three nudges.
   for (let i = 1; i <= 3; i++) {
@@ -282,6 +282,8 @@ test('chats with the human after the party returned do not use up the nudges (bu
   }
   const q = await settled(id, { timeout: 8000 });
   assert.equal(q.status, 'done', `the quest ended ${q.status}: ${q.chronicle}`);
+  assert.equal(messagesTo(id, /Message from the human: chat \d/).length, 3);
+  assert.ok(messagesTo(id, /The whole party has finished/).length > 3, 'each chat started the finish nudges afresh');
 });
 
 // ── revival ──
