@@ -196,6 +196,19 @@ The downtime is kept in `pausedMs` and left out of running times.
 - **Queue order:** agents whose chain of dependents is longest start first; equal ones in arrival order.
 - **Interruptions:** waiting agents stay waiting when the server stops, and are re-checked on resume.
 
+## End-to-end tests
+
+- `server.js` exports `createServer(guild, { token, hosts })` and listens only when run as the main module, so a
+  test runs the real server in its own process on port 0. `node server.js` and the systemd unit are unchanged.
+- `GUILD_HOME` (lib/store.js) and `GUILD_CLAUDE_BIN` (lib/claude.js) are read at import, so `test/helpers/e2e.js`
+  sets them and then imports the server: one Guild per test file, which `node --test` runs in its own process.
+- `test/fixtures/fake-claude.js` replaces `claude`, not Guild's code: it parses the same flags (an unknown one fails
+  loudly), speaks stream-json, and starts the MCP servers from `--mcp-config`, so `/internal` and the quest secrets
+  are exercised for real. Each session follows a script chosen from a JSON scenario by matching its system prompt
+  and first message; `--resume` goes on from where the session stopped, or runs the entry's `resume` steps.
+- Teardown marks the quests interrupted before killing the sessions, so no Archmage is revived (lifecycle bug 1),
+  waits for them to exit, and only then removes the scratch home.
+
 ## Out of scope for v1
 
 Auth, cost budgets, nested recruiting, pushing or opening PRs. (Resuming interrupted quests was added after v1.)
