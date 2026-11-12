@@ -7,7 +7,7 @@ import { startGuild } from './helpers/e2e.js';
 
 // The end of a quest and of the server: processes are stopped (process groups included) before worktrees go,
 // end() runs once, saves are flushed, quest ids do not clash, a failing event log or a stalled SSE client does not
-// break the server. Bug numbers refer to the lifecycle table in guild-self-analysis.md (maintainer's notes, not in this repo).
+// break the server. Bug numbers refer to the lifecycle table in the maintainer's lifecycle notes (guild-self-analysis.md, not in this repo).
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plan = (task, role = 'researcher') => ({ call: 'propose_plan', args: { summary: 's', agents: [{ key: 'a', role, title: 'Do it', task }] } });

@@ -12,9 +12,8 @@ Guild works on itself here, so take care: the live server that runs your quest i
   temp directories over mocks.
 - **Style.** Match the surrounding code: small functions, comments that say why, plain messages for the human and
   the Archmage.
-- **Docs.** User-facing changes update `README.md`, and design decisions update `DESIGN.md`. The decisions already
-  taken are in `guild-decisions.md (maintainer's notes, not in this repo)`, and the findings behind them are in
-  `guild-self-analysis.md (maintainer's notes, not in this repo)`. Follow them.
+- **Docs.** User-facing changes update `README.md`, and design decisions update `DESIGN.md`. Follow the decisions
+  already recorded there.
 - **Security.** Requests must name this server and come from its own origin, and bodies must be JSON
   (`lib/guard.js`). The API needs the token from other machines, and `/internal` needs the per-quest secret
   (`lib/auth.js`). New routes go through the same checks. New role fields must pass

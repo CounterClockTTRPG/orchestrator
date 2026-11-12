@@ -4,7 +4,7 @@ import { startGuild } from './helpers/e2e.js';
 
 // Lifecycle paths through the real server with fake-claude as every session: asks and answers, nudges, and the
 // revival of an Archmage whose process dies. Bug numbers refer to the lifecycle table in
-// guild-self-analysis.md (maintainer's notes, not in this repo); a { todo } test is one that exposes a bug still present.
+// the maintainer's lifecycle notes (guild-self-analysis.md, not in this repo); a { todo } test is one that exposes a bug still present.
 
 const plan = (task, extra = {}) => ({ call: 'propose_plan', args: { summary: 's', agents: [{ key: 'a', role: 'researcher', title: 'Do it', task, ...extra }] } });
 const finish = { call: 'finish_quest', args: { chronicle: 'Done.' } };

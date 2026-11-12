@@ -5,6 +5,8 @@ orchestrator agent, **the Archmage**, plans a party of subagents (scouts, audito
 dispatches them. It reads their reports as they arrive and steers them, then writes the **chronicle**, which is the
 final result. The browser shows the whole council live, with a procedurally generated portrait for every agent.
 
+![A quest under way: the Archmage leads a smith and an inquisitor at work, a tester waiting on the smith, and a scout who has returned](docs/screenshots/quest.png)
+
 - **Headless Claude Code:** every agent is a `claude -p` process using your existing Claude Code login. There is
   nothing to install: no npm dependencies, Node ≥ 20.
 - **Read-only or edit quests:** in edit mode each agent works in its own git worktree and branch. The Archmage merges
@@ -36,9 +38,25 @@ final result. The browser shows the whole council live, with a procedurally gene
   in the plan review.
 - **REST + SSE API and an MCP server,** so other projects and Claude Code sessions can start and follow quests.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Reviewing the proposed party before dispatch: roles, titles and tasks are editable](docs/screenshots/plan-review.png) | ![The chronicle of a finished audit quest](docs/screenshots/chronicle.png) |
+| **Plan review:** edit the proposed party before it sets out. | **The chronicle:** the Archmage's final report. |
+| ![The same quest in the sci-fi theme](docs/screenshots/quest-scifi.png) | |
+| **Themes:** the same quest in the sci-fi theme. | |
+
+The screenshots show demo quests on a toy repository, played by the test stand-in for `claude`
+(`test/fixtures/fake-claude.js`).
+
 ## Running it
 
+Requirements: Node ≥ 20, git, and [Claude Code](https://claude.com/claude-code) logged in (`claude` on your `PATH`).
+
 ```bash
+git clone https://github.com/CounterClockTTRPG/orchestrator.git ~/orchestrator
+cd ~/orchestrator
 npm start                 # http://localhost:7777/  (listens on 0.0.0.0:7777; other machines need the token)
 ```
 
@@ -73,7 +91,7 @@ To run it as a service, use a systemd user unit:
 Description=Guild agent orchestrator
 
 [Service]
-ExecStart=/usr/bin/env node %h/claude/orchestrator/server.js
+ExecStart=/usr/bin/env node %h/orchestrator/server.js
 Restart=on-failure
 
 [Install]
@@ -89,7 +107,7 @@ systemctl --user daemon-reload && systemctl --user enable --now guild
 ### From Claude Code (MCP)
 
 ```bash
-claude mcp add guild -- node ~/claude/orchestrator/bin/guild-mcp.js
+claude mcp add guild -- node ~/orchestrator/bin/guild-mcp.js
 ```
 
 Tools: `start_quest(goal, cwd?, app?, mode?, planning?, maxAgents?)`, `quest_status(id)`, `wait_for_quest(id, timeoutSec?)`,
@@ -227,5 +245,10 @@ scratch git repositories, and `test/fixtures/fake-claude.js` stands in for `clau
 protocol, starts the real MCP servers and calls their tools, and follows a JSON scenario: what the Archmage and each
 agent say, call, commit and report. The step types are listed at the top of `fake-claude.js`.
 
-portraitgen is vendored from `raf/portraitgen` (see `vendor/portraitgen/VENDORED.md`). To update it, copy its `src/`
+portraitgen is vendored from [CounterClockTTRPG/portraitgen](https://github.com/CounterClockTTRPG/portraitgen) (see `vendor/portraitgen/VENDORED.md`). To update it, copy its `src/`
 again.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The vendored [portraitgen](https://github.com/CounterClockTTRPG/portraitgen) in
+`vendor/portraitgen/` is MIT licensed as well.

@@ -5,7 +5,7 @@ import { startGuild } from './helpers/e2e.js';
 // The Archmage's turns through the real server with fake-claude: turns that end in an API error are retried with a
 // backoff (bug 13), a batch sent into a dead or dying pipe is delivered to the revived Archmage (bug 12), and an
 // error in its handlers is logged instead of thrown (bug 8). Bug numbers refer to the lifecycle table in
-// guild-self-analysis.md (maintainer's notes, not in this repo).
+// the maintainer's lifecycle notes (guild-self-analysis.md, not in this repo).
 
 // Short backoffs (20, 40, 80 ms…), and three retries before the quest fails.
 Object.assign(process.env, { GUILD_RETRY_MS: '20', GUILD_RETRY_MAX_MS: '200', GUILD_RETRIES: '3' });

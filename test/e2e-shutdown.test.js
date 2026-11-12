@@ -10,7 +10,7 @@ import { makeRepo } from './helpers/e2e.js';
 
 // The real `node server.js` process stopped by SIGTERM (what systemd and Ctrl-C send) while a quest is under way,
 // then a second one started on the same GUILD_HOME. Bug numbers refer to the lifecycle table in
-// guild-self-analysis.md (maintainer's notes, not in this repo).
+// the maintainer's lifecycle notes (guild-self-analysis.md, not in this repo).
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
